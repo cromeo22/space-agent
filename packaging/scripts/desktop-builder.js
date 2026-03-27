@@ -218,7 +218,7 @@ function createBuildConfig(platformSpec) {
   buildConfig[platformSpec.configKey] = platformConfig;
   buildConfig.directories = {
     ...(buildConfig.directories || {}),
-    output: path.join("release", platformSpec.key)
+    output: path.join("dist", "desktop", platformSpec.key)
   };
 
   return {
