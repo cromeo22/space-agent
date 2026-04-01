@@ -36,6 +36,8 @@ Current shared module locations:
 - `L1` and `L2` are transient runtime state and are gitignored; do not document repo-owned example content there as if it were durable framework structure
 - groups may include users and other groups, and may declare managers that can write to that group's `L1` area
 - group definitions live in `group.yaml` files under `app/L0/<group-id>/` and `app/L1/<group-id>/`
+- read permission rules are explicit: users can read their own `L2/<username>/`, and can read `L0/<group>/` and `L1/<group>/` only for groups they belong to
+- write permission rules are explicit: users can write their own `L2/<username>/`; users can write `L1/<group>/` only for groups they manage directly or through managing-group inclusion; `_admin` members can write any `L1/` and `L2/` path; nobody writes `L0/`
 - modules are the supported browser extension unit
 - each group or user owns a `mod/` folder, and module contents are namespaced as `mod/<author>/<repo>/...`
 - browser-facing code and assets should normally be delivered through `/mod/...`
@@ -60,7 +62,7 @@ Current shared module locations:
 ## Current State
 
 - `server/pages/index.html` and `server/pages/admin.html` are plain module-backed shells; the server router decides whether to serve them or redirect to `/login`
-- `server/pages/login.html` contains the login submit flow inline and exchanges credentials for a server session before redirecting to `/`
+- `server/pages/login.html` contains the login submit flow inline, can create a temporary guest account through `/api/create_guest`, and exchanges credentials for a server session before redirecting to `/`
 - `/logout` is handled entirely by the server pages layer; there is no standalone logout page shell in `app/` or `server/pages/`
 - browser-side file changes still require a manual browser refresh; live reload is not wired into the app runtime yet
 - when app structure, layer behavior, module layout, entry shells, or frontend conventions change, update this file in the same session

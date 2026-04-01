@@ -173,6 +173,7 @@ function createRequestHandler(options) {
           watchdog,
           host,
           port,
+          projectRoot,
           requestContext,
           user: requestContext.user
         });

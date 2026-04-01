@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 
 import { createPasswordVerifier } from "./passwords.js";
 import {
@@ -9,6 +10,31 @@ import {
   writeUserConfig,
   writeUserLogins
 } from "./user-files.js";
+
+const GUEST_USERNAME_PREFIX = "guest_";
+const GUEST_USERNAME_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+const GENERATED_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+const GUEST_USERNAME_SUFFIX_LENGTH = 6;
+const GENERATED_PASSWORD_LENGTH = 18;
+const GUEST_CREATION_MAX_ATTEMPTS = 64;
+
+function createRandomString(length, alphabet) {
+  const normalizedLength = Number(length);
+  const sourceAlphabet = String(alphabet || "");
+
+  if (!Number.isInteger(normalizedLength) || normalizedLength <= 0 || !sourceAlphabet) {
+    return "";
+  }
+
+  const bytes = randomBytes(normalizedLength);
+  let output = "";
+
+  for (let index = 0; index < normalizedLength; index += 1) {
+    output += sourceAlphabet[bytes[index] % sourceAlphabet.length];
+  }
+
+  return output;
+}
 
 function removeLegacyPasswordFields(config = {}) {
   const {
@@ -80,4 +106,36 @@ function setUserPassword(projectRoot, username, password) {
   };
 }
 
-export { createUser, setUserPassword };
+function createGuestUser(projectRoot, options = {}) {
+  const password = String(options.password || createRandomString(GENERATED_PASSWORD_LENGTH, GENERATED_PASSWORD_ALPHABET));
+
+  for (let attempt = 0; attempt < GUEST_CREATION_MAX_ATTEMPTS; attempt += 1) {
+    const username = `${GUEST_USERNAME_PREFIX}${createRandomString(
+      GUEST_USERNAME_SUFFIX_LENGTH,
+      GUEST_USERNAME_ALPHABET
+    )}`;
+
+    if (fs.existsSync(buildUserAbsolutePath(projectRoot, username))) {
+      continue;
+    }
+
+    try {
+      createUser(projectRoot, username, password);
+    } catch (error) {
+      if (String(error?.message || "").startsWith("User already exists:")) {
+        continue;
+      }
+
+      throw error;
+    }
+
+    return {
+      password,
+      username
+    };
+  }
+
+  throw new Error("Failed to create guest account. Try again.");
+}
+
+export { createGuestUser, createUser, setUserPassword };

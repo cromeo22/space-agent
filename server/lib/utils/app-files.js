@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 
 function normalizePathSegment(input) {
@@ -93,59 +92,4 @@ function globToRegExp(pattern) {
   return new RegExp(out);
 }
 
-function walkAppFiles(rootDir, currentDir = rootDir, prefix = "") {
-  const entries = fs.readdirSync(currentDir, { withFileTypes: true });
-  const files = [];
-
-  entries
-    .slice()
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .forEach((entry) => {
-      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      const fullPath = path.join(currentDir, entry.name);
-
-      if (entry.isDirectory()) {
-        files.push(...walkAppFiles(rootDir, fullPath, relativePath));
-        return;
-      }
-
-      if (entry.isFile()) {
-        files.push(relativePath);
-      }
-    });
-
-  return files;
-}
-
-function listAppFiles(appDir, requestedPaths) {
-  const allFiles = walkAppFiles(appDir);
-  const allFilesSet = new Set(allFiles);
-
-  return requestedPaths.map((requestedPath) => {
-    const normalizedPath = normalizePathSegment(requestedPath);
-
-    if (!normalizedPath) {
-      return {
-        path: String(requestedPath || ""),
-        files: []
-      };
-    }
-
-    if (!hasGlob(normalizedPath)) {
-      return {
-        path: String(requestedPath),
-        files: allFilesSet.has(normalizedPath) ? [`/${normalizedPath}`] : []
-      };
-    }
-
-    const matcher = globToRegExp(normalizedPath);
-    const files = allFiles.filter((filePath) => matcher.test(filePath)).map((filePath) => `/${filePath}`);
-
-    return {
-      path: String(requestedPath),
-      files
-    };
-  });
-}
-
-export { globToRegExp, hasGlob, listAppFiles, normalizePathSegment };
+export { globToRegExp, hasGlob, normalizePathSegment };

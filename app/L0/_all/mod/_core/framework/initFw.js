@@ -13,8 +13,6 @@ await import("./alpine.min.js");
 
 const Alpine = globalThis.Alpine;
 
-// register $confirmClick magic helper for inline button confirmations
-registerAlpineMagic();
 
 // add x-destroy directive to alpine
 Alpine.directive(
@@ -177,3 +175,7 @@ Alpine.directive(
 
   return out;
 });
+
+
+// register $confirmClick magic helper for inline button confirmations
+registerAlpineMagic();

@@ -8,10 +8,5 @@ export function get(context) {
     name: "agent-one-server",
     browserAppUrl,
     user: context.user || null,
-    responsibilities: [
-      "serve the browser app during development",
-      "proxy outbound fetch calls",
-      "manage sqlite persistence"
-    ]
   };
 }

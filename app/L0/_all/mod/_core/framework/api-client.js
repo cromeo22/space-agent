@@ -14,12 +14,14 @@
 
 /**
  * @typedef {{
- *   ok: boolean,
  *   endpoint: string,
+ *   recursive?: boolean,
+ *   paths?: string[],
  *   path: string,
- *   content: string,
- *   note: string
- * }} AssetApiResult
+ *   content?: string,
+ *   encoding?: string,
+ *   bytesWritten?: number
+ * }} FileApiResult
  */
 
 function appendQueryValue(searchParams, key, value) {
@@ -142,34 +144,53 @@ export function createApiClient(options = {}) {
 
   /**
    * @param {string} path
-   * @returns {Promise<AssetApiResult>}
+   * @param {string} [encoding]
+   * @returns {Promise<FileApiResult>}
    */
-  async function assetGet(path) {
-    return call("asset_get", {
+  async function fileRead(path, encoding = "utf8") {
+    return call("file_read", {
       method: "GET",
-      query: { path }
+      query: { encoding, path }
     });
   }
 
   /**
    * @param {string} path
    * @param {string} content
-   * @returns {Promise<AssetApiResult>}
+   * @param {string} [encoding]
+   * @returns {Promise<FileApiResult>}
    */
-  async function assetSet(path, content) {
-    return call("asset_set", {
+  async function fileWrite(path, content, encoding = "utf8") {
+    return call("file_write", {
       method: "POST",
       body: {
+        encoding,
         path,
         content
       }
     });
   }
 
+  /**
+   * @param {string} path
+   * @param {boolean} [recursive]
+   * @returns {Promise<FileApiResult>}
+   */
+  async function fileList(path, recursive = false) {
+    return call("file_list", {
+      method: "GET",
+      query: {
+        path,
+        recursive
+      }
+    });
+  }
+
   return {
-    assetGet,
-    assetSet,
     call,
+    fileList,
+    fileRead,
+    fileWrite,
     health
   };
 }

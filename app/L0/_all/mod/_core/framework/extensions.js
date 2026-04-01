@@ -18,8 +18,8 @@ import * as cache from "./cache.js";
  * @property {{ default: (...data: any[]) => (void|Promise<void>) }} module
  */
 
-const JS_CACHE_AREA = "frontend_extensions_js(extensions)(plugins)";
-const HTML_CACHE_AREA = "frontend_extensions_html(extensions)(plugins)";
+const JS_CACHE_AREA = "frontend_extensions_js(extensions)";
+const HTML_CACHE_AREA = "frontend_extensions_html(extensions)";
 
 export const API_EXTENSION_EXCLUDED_ENDPOINTS = new Set([
   "/api/load_webui_extensions",

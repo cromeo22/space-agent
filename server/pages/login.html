@@ -52,6 +52,25 @@
         gap: 0.85rem;
       }
 
+      .login-separator {
+        margin: 1.15rem 0 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        color: #69788c;
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .login-separator::before,
+      .login-separator::after {
+        content: "";
+        flex: 1 1 auto;
+        height: 1px;
+        background: rgba(117, 136, 164, 0.28);
+      }
+
       label {
         display: grid;
         gap: 0.35rem;
@@ -90,6 +109,29 @@
         cursor: wait;
       }
 
+      .secondary-button {
+        width: 100%;
+        color: #193354;
+        background: linear-gradient(135deg, rgba(232, 238, 251, 0.98), rgba(218, 242, 233, 0.98));
+        box-shadow: inset 0 0 0 1px rgba(100, 127, 171, 0.16);
+      }
+
+      .guest-card {
+        margin-top: 0.95rem;
+        padding: 0.95rem 1rem;
+        border-radius: 0.95rem;
+        background: rgba(237, 244, 255, 0.8);
+        border: 1px solid rgba(110, 140, 196, 0.18);
+      }
+
+      .guest-card p {
+        margin-bottom: 0.9rem;
+      }
+
+      .guest-actions {
+        margin-top: 0.85rem;
+      }
+
       .status {
         min-height: 1.3rem;
         margin-top: 0.9rem;
@@ -126,6 +168,24 @@
         </label>
         <button id="submit-button" type="submit">Sign In</button>
       </form>
+      <div class="login-separator">or</div>
+      <button id="guest-create-button" class="secondary-button" type="button">
+        Create Temporary Guest Account
+      </button>
+      <section id="guest-card" class="guest-card" hidden>
+        <p>Save these guest credentials. You can copy them now and continue directly.</p>
+        <label>
+          Guest Username
+          <input id="guest-username" type="text" readonly />
+        </label>
+        <label>
+          Guest Password
+          <input id="guest-password" type="text" readonly />
+        </label>
+        <div class="guest-actions">
+          <button id="guest-continue-button" type="button">Continue</button>
+        </div>
+      </section>
       <div id="status" class="status"></div>
     </main>
     <script>
@@ -137,11 +197,38 @@
       const usernameInput = document.getElementById("username");
       const passwordInput = document.getElementById("password");
       const submitButton = document.getElementById("submit-button");
+      const guestCreateButton = document.getElementById("guest-create-button");
+      const guestCard = document.getElementById("guest-card");
+      const guestUsernameInput = document.getElementById("guest-username");
+      const guestPasswordInput = document.getElementById("guest-password");
+      const guestContinueButton = document.getElementById("guest-continue-button");
       const statusEl = document.getElementById("status");
+      let guestCredentials = null;
 
       function setStatus(message, tone = "") {
         statusEl.textContent = message;
         statusEl.className = tone ? `status ${tone}` : "status";
+      }
+
+      function syncButtonState(isBusy = false) {
+        submitButton.disabled = isBusy;
+        guestCreateButton.disabled = isBusy;
+        guestContinueButton.disabled = isBusy || !guestCredentials;
+      }
+
+      function setGuestCredentials(credentials) {
+        guestCredentials =
+          credentials && credentials.username && credentials.password
+            ? {
+                password: credentials.password,
+                username: credentials.username
+              }
+            : null;
+
+        guestCard.hidden = !guestCredentials;
+        guestUsernameInput.value = guestCredentials ? guestCredentials.username : "";
+        guestPasswordInput.value = guestCredentials ? guestCredentials.password : "";
+        syncButtonState(false);
       }
 
       function toBase64Url(bytes) {
@@ -243,7 +330,7 @@
       async function handleLogin(event) {
         event.preventDefault();
         setStatus("Signing in...");
-        submitButton.disabled = true;
+        syncButtonState(true);
 
         try {
           const username = usernameInput.value.trim();
@@ -289,12 +376,47 @@
           window.location.replace("/");
         } catch (error) {
           setStatus(error.message || "Sign-in failed.", "error");
-          submitButton.disabled = false;
+          syncButtonState(false);
           passwordInput.select();
         }
       }
 
+      async function handleGuestCreate() {
+        setStatus("Creating guest account...");
+        syncButtonState(true);
+
+        try {
+          const guestAccount = await postJson("/api/create_guest", {});
+          setGuestCredentials(guestAccount);
+          usernameInput.value = guestAccount.username;
+          passwordInput.value = guestAccount.password;
+          setStatus("Guest account created. Copy the credentials, then continue.", "ok");
+        } catch (error) {
+          syncButtonState(false);
+          setStatus(error.message || "Guest account creation failed.", "error");
+        }
+      }
+
+      function handleGuestContinue() {
+        if (!guestCredentials) {
+          return;
+        }
+
+        usernameInput.value = guestCredentials.username;
+        passwordInput.value = guestCredentials.password;
+
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit(submitButton);
+          return;
+        }
+
+        submitButton.click();
+      }
+
       form.addEventListener("submit", handleLogin);
+      guestCreateButton.addEventListener("click", handleGuestCreate);
+      guestContinueButton.addEventListener("click", handleGuestContinue);
+      syncButtonState(false);
     </script>
   </body>
 </html>

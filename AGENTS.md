@@ -65,6 +65,10 @@ Project concepts:
 - `app/L2/<username>/user.yaml` stores the user's login verifier under a `password:` object, and `app/L2/<username>/logins.json` stores active session codes
 - the server resolves `/mod/...` requests through that layered inheritance model using watchdog-backed indexes
 - the browser now authenticates through the server at `/login`, uses a server-issued session cookie for both API and file access, and clears that session through `/logout`
+- the login screen can currently spawn temporary guest users through a public server endpoint; those guests are ordinary `app/L2/<username>/` users with generated credentials
+- app file APIs now operate on app-rooted paths such as `L2/alice/user.yaml` or `/app/L2/alice/user.yaml`, not on `/mod/...` cascade paths
+- read permissions are: a user can read their own `L2/<username>/`, and can read `L0/<group>/` and `L1/<group>/` for groups they belong to
+- write permissions are: a user can write their own `L2/<username>/`; a user can write `L1/<group>/` only when they manage that group directly or through a managing group include chain; members of `_admin` can write any `L1/` and `L2/` path; nobody writes `L0/`
 - non-`/api` and non-`/mod` browser entry routes are served from `server/pages/`; `/login` is public and the protected page shells live behind the router-side session gate
 - the server-side backend under `server/` is expected to use ES module syntax throughout
 - detailed browser-runtime rules live in `/app/AGENTS.md`

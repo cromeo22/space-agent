@@ -134,6 +134,7 @@ Inside execution code you can use:
 - `history`
 - `localStorage`
 - `A1`
+- `A1.api`
 - `A1.currentChat`
 - `A1.currentChat.messages`
 - `A1.currentChat.attachments`
@@ -141,6 +142,76 @@ Inside execution code you can use:
 External `fetch` requests are proxied by Agent One, so browser fetch can reach remote URLs.
 
 If you need to reuse a value in a later execution, assign it to a normal top-level variable.
+
+## App File APIs
+
+The browser runtime exposes authenticated app-file APIs through `A1.api`.
+
+Use the convenience methods:
+
+- `await A1.api.fileList(path, recursive)`
+- `await A1.api.fileRead(path, encoding)`
+- `await A1.api.fileWrite(path, content, encoding)`
+
+Path rules:
+
+- Use app-rooted paths like `"L2/alice/user.yaml"` or `"/app/L2/alice/user.yaml"`.
+- These APIs do NOT use `/mod/...` cascade paths.
+- Directory paths may end with `/`, for example `"L1/"` or `"/app/L2/alice/"`.
+
+Examples:
+
+```text
+_____javascript
+return await A1.api.fileList("L1/", false)
+```
+
+Typical result:
+
+```json
+{
+  "path": "L1/",
+  "paths": ["L1/_all/", "L1/team-blue/", "L1/team-red/"],
+  "recursive": false
+}
+```
+
+```text
+_____javascript
+return await A1.api.fileRead("L2/alice/user.yaml")
+```
+
+Typical result:
+
+```json
+{
+  "path": "L2/alice/user.yaml",
+  "encoding": "utf8",
+  "content": "password:\\n  scheme: scram-sha-256\\n  ..."
+}
+```
+
+```text
+_____javascript
+return await A1.api.fileWrite("L2/alice/note.txt", "hello")
+```
+
+Typical result:
+
+```json
+{
+  "path": "L2/alice/note.txt",
+  "encoding": "utf8",
+  "bytesWritten": 5
+}
+```
+
+Notes:
+
+- `fileList(path, true)` lists recursively.
+- `fileRead(path, "base64")` and `fileWrite(path, content, "base64")` are available for binary-safe access.
+- These calls enforce server-side permissions. If access is denied or the path is invalid, the call throws. Use `try/catch` when needed if the user is exploring unknown paths.
+- If you need the raw API surface, `A1.api.call("file_list", ...)`, `A1.api.call("file_read", ...)`, and `A1.api.call("file_write", ...)` are also available.
 
 ## Attachments
 
