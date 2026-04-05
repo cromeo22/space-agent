@@ -7,7 +7,7 @@ import {
   resolveProjectAbsolutePath
 } from "../customware/layout.js";
 import { parseSimpleYaml } from "../utils/yaml_lite.js";
-import { normalizeVerifierRecord } from "./passwords.js";
+import { inspectPasswordRecord } from "./passwords.js";
 
 function createEmptyUserRecord(username) {
   return {
@@ -18,8 +18,7 @@ function createEmptyUserRecord(username) {
     projectDir: "",
     sessions: [],
     userConfigPath: "",
-    username,
-    verifier: null
+    username
   };
 }
 
@@ -112,13 +111,12 @@ function buildUserIndexSnapshot(context = {}) {
     try {
       const absolutePath = resolveProjectAbsolutePath(projectRoot, projectPath, context.runtimeParams);
       const parsedConfig = JSON.parse(fs.readFileSync(absolutePath, "utf8"));
-      const verifier = normalizeVerifierRecord(parsedConfig);
-      userRecord.verifier = verifier;
-      userRecord.hasPassword = Boolean(verifier);
+      const passwordRecord = inspectPasswordRecord(parsedConfig);
+      userRecord.hasPassword = Boolean(passwordRecord);
 
-      if (!verifier) {
+      if (!passwordRecord) {
         errors.push({
-          message: "Ignored invalid password.json verifier.",
+          message: "Ignored invalid or unsealed password.json verifier.",
           projectPath
         });
       }
@@ -153,18 +151,18 @@ function buildUserIndexSnapshot(context = {}) {
       return;
     }
 
-    Object.entries(parsedLogins).forEach(([sessionToken, details]) => {
-      const normalizedToken = String(sessionToken || "").trim();
+    Object.entries(parsedLogins).forEach(([sessionVerifier, details]) => {
+      const normalizedVerifier = String(sessionVerifier || "").trim();
 
-      if (!normalizedToken) {
+      if (!normalizedVerifier) {
         return;
       }
 
-      if (sessions[normalizedToken]) {
+      if (sessions[normalizedVerifier]) {
         errors.push({
-          message: "Ignored duplicate session token across users.",
+          message: "Ignored duplicate session verifier across users.",
           projectPath,
-          sessionToken: normalizedToken
+          sessionVerifier: normalizedVerifier
         });
         return;
       }
@@ -175,11 +173,11 @@ function buildUserIndexSnapshot(context = {}) {
       const sessionRecord = {
         ...sessionDetails,
         loginsPath: projectPath,
-        sessionToken: normalizedToken,
+        sessionVerifier: normalizedVerifier,
         username: userLoginsInfo.username
       };
 
-      sessions[normalizedToken] = sessionRecord;
+      sessions[normalizedVerifier] = sessionRecord;
       userRecord.sessions.push(sessionRecord);
     });
   });
@@ -190,15 +188,15 @@ function buildUserIndexSnapshot(context = {}) {
     }
 
     userRecord.sessions.sort((left, right) =>
-      String(left.sessionToken || "").localeCompare(String(right.sessionToken || ""))
+      String(left.sessionVerifier || "").localeCompare(String(right.sessionVerifier || ""))
     );
   });
 
   return {
     errors,
-    getSession(sessionToken) {
-      const normalizedToken = String(sessionToken || "").trim();
-      return normalizedToken ? sessions[normalizedToken] || null : null;
+    getSession(sessionVerifier) {
+      const normalizedVerifier = String(sessionVerifier || "").trim();
+      return normalizedVerifier ? sessions[normalizedVerifier] || null : null;
     },
     getUser(username) {
       const normalizedUsername = String(username || "").trim();

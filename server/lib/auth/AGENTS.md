@@ -13,6 +13,7 @@ Documentation is top priority for this subtree. After any change under `server/l
 Current files:
 
 - `service.js`: login challenge creation, login completion, session-cookie helpers, session revocation, and request-user resolution
+- `keys_manage.js`: backend-only auth-key loading from shared env injection or local `server/data/auth_keys.json`
 - `passwords.js`: verifier and proof helpers
 - `user_files.js`: canonical `L2/<username>/user.yaml` and `meta/` read or write helpers
 - `user_index.js`: derived user and session index snapshot builder
@@ -23,10 +24,11 @@ Current files:
 Current user storage layout:
 
 - metadata: logical `L2/<username>/user.yaml`
-- password verifier: logical `L2/<username>/meta/password.json`
-- active sessions: logical `L2/<username>/meta/logins.json`
+- password verifier envelope: logical `L2/<username>/meta/password.json`
+- active session verifiers: logical `L2/<username>/meta/logins.json`
 - user-owned modules: logical `L2/<username>/mod/`
 - on disk those files live under `CUSTOMWARE_PATH/L2/...` when `CUSTOMWARE_PATH` is configured, otherwise under repo `app/L2/...`
+- backend-only auth keys live outside the logical app tree and come from either shared process env injection via `SPACE_AUTH_PASSWORD_SEAL_KEY` and `SPACE_AUTH_SESSION_HMAC_KEY`, or the gitignored local fallback `server/data/auth_keys.json`
 
 `user_files.js` is the canonical helper layer for those files. Do not write them through ad hoc path logic elsewhere.
 
@@ -35,16 +37,24 @@ Current user storage layout:
 Current session rules:
 
 - the session cookie name is `space_session`
-- the cookie is `HttpOnly`, `SameSite=Strict`, and scoped to `/`
+- the cookie is `HttpOnly`, `SameSite=Strict`, scoped to `/`, and carries a 30-day max age
 - login uses the shared challenge and proof flow from `service.js`
-- successful login writes the session record into `meta/logins.json` and refreshes the watchdog
+- successful login writes a backend-keyed session verifier plus signed metadata into `meta/logins.json` and refreshes the watchdog
+- session records include signed metadata and an absolute expiry timestamp
 - session revocation deletes the stored session entry and refreshes the watchdog
+- unsigned or expired session records are rejected even if they exist on disk
 - when `SINGLE_USER_APP` is enabled, request auth resolves every request to the implicit `user` principal and bypasses cookie-backed login entirely
+
+Current password rules:
+
+- `meta/password.json` stores a server-sealed SCRAM verifier envelope, not plaintext `stored_key` and `server_key` fields
+- only backend helpers that hold the auth seal key may generate accepted password records
+- the auth service rewrites legacy plaintext verifier files into sealed records during startup before the server begins handling requests
 
 Current user-index rules:
 
-- `user_index.js` derives user records and sessions from `user.yaml`, `password.json`, and `logins.json`
-- request auth state should flow from that derived index rather than reparsing those files manually per request
+- `user_index.js` derives user records, sealed-password presence, and stored session graphs from `user.yaml`, `password.json`, and `logins.json`
+- request auth state should flow from that derived index, while `service.js` remains the owner of password-record opening and session-signature validation
 
 ## User-Management Contract
 
@@ -57,13 +67,14 @@ Current user-index rules:
 Rules:
 
 - user creation initializes the user directory, `meta/`, and `mod/`
-- password resets rewrite the verifier and clear active sessions
+- password resets rewrite the sealed verifier and clear active sessions
 - guest users are created under randomized `guest_` usernames
 
 ## Development Guidance
 
 - keep auth state and session rules centralized here
 - do not add direct cookie or session-file manipulation elsewhere when the auth service already owns the flow
+- do not hand-roll `password.json` contents outside backend helpers; use `password_generate`, `user_manage.js`, or auth-service helpers so the backend seal key is applied correctly
 - treat the current local file-backed auth model as a constrained infrastructure contract, not as a place to casually grow unrelated policy
 - if user storage, session semantics, or login flow change, also update `app/L0/_all/mod/_core/onscreen_agent/ext/skills/development/` because its development skills mirror this contract
 - if user storage, session semantics, or login flow change, update this file and the relevant router or API docs in the same session

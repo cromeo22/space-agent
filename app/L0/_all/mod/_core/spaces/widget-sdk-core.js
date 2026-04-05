@@ -6,7 +6,6 @@ import {
   WIDGET_SIZE_PRESETS
 } from "/mod/_core/spaces/constants.js";
 
-const PRIMITIVE_FLAG = "__spaceWidgetPrimitive";
 const WIDGET_FLAG = "__spaceWidgetDefinition";
 
 function clampInteger(value, min, max, fallback) {
@@ -39,34 +38,6 @@ function resolveFallbackSize(fallback) {
     cols: DEFAULT_WIDGET_SIZE.cols,
     rows: DEFAULT_WIDGET_SIZE.rows
   };
-}
-
-function normalizeChildren(children) {
-  if (children === undefined || children === null) {
-    return [];
-  }
-
-  const rawChildren = Array.isArray(children) ? children : [children];
-  return rawChildren.flatMap((child) => {
-    if (Array.isArray(child)) {
-      return normalizeChildren(child);
-    }
-
-    return child === undefined || child === null || child === false ? [] : [child];
-  });
-}
-
-function createPrimitive(kind, props = {}, children = []) {
-  return {
-    [PRIMITIVE_FLAG]: true,
-    children: normalizeChildren(children),
-    kind,
-    props: { ...props }
-  };
-}
-
-export function isWidgetPrimitive(value) {
-  return Boolean(value?.[PRIMITIVE_FLAG]);
 }
 
 export function isWidgetDefinition(value) {
@@ -174,87 +145,4 @@ export function defineWidget(definition = {}) {
   });
 }
 
-export function fragment(children = []) {
-  return createPrimitive("fragment", {}, children);
-}
-
-export function stack(childrenOrOptions = [], options = {}) {
-  if (!Array.isArray(childrenOrOptions) && typeof childrenOrOptions === "object" && childrenOrOptions) {
-    return createPrimitive("stack", childrenOrOptions, childrenOrOptions.children || []);
-  }
-
-  return createPrimitive("stack", options, childrenOrOptions);
-}
-
-export function group(childrenOrOptions = [], options = {}) {
-  if (!Array.isArray(childrenOrOptions) && typeof childrenOrOptions === "object" && childrenOrOptions) {
-    return createPrimitive("group", childrenOrOptions, childrenOrOptions.children || []);
-  }
-
-  return createPrimitive("group", options, childrenOrOptions);
-}
-
-export function text(options = {}) {
-  return createPrimitive("text", options);
-}
-
-export function metric(options = {}) {
-  return createPrimitive("metric", options);
-}
-
-export function list(options = {}) {
-  return createPrimitive("list", options);
-}
-
-export function keyValue(options = {}) {
-  return createPrimitive("keyValue", options);
-}
-
-export function table(options = {}) {
-  return createPrimitive("table", options);
-}
-
-export function markdown(sourceOrOptions = "", options = {}) {
-  if (typeof sourceOrOptions === "object" && sourceOrOptions) {
-    return createPrimitive("markdown", sourceOrOptions);
-  }
-
-  return createPrimitive("markdown", {
-    ...options,
-    source: sourceOrOptions
-  });
-}
-
-export function rawHtml(htmlOrOptions = "", options = {}) {
-  if (typeof htmlOrOptions === "object" && htmlOrOptions) {
-    return createPrimitive("rawHtml", htmlOrOptions);
-  }
-
-  return createPrimitive("rawHtml", {
-    ...options,
-    html: htmlOrOptions
-  });
-}
-
-export const html = rawHtml;
-
-export function notice(options = {}) {
-  return createPrimitive("notice", options);
-}
-
 export { DEFAULT_WIDGET_SIZE };
-
-export const primitives = Object.freeze({
-  fragment,
-  group,
-  html,
-  keyValue,
-  list,
-  markdown,
-  metric,
-  notice,
-  rawHtml,
-  stack,
-  table,
-  text
-});

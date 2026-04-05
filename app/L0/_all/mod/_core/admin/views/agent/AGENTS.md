@@ -60,6 +60,8 @@ Current behavior:
 - empty-response protocol-correction messages must not re-echo the prior execution output; they should tell the agent to continue from the execution output above or provide the user-facing answer
 - loaded admin skills are passed through execution as typed runtime values, not pasted blindly into the prompt
 - the surface uses the shared visual dialog helpers and shared thread renderer from `_core/visual`
+- `view.js` enables the shared marked-backed chat-bubble markdown renderer so settled admin chat bubbles render markdown consistently with the onscreen agent
+- `store.js` publishes the active admin thread snapshot at `space.chat`, including `messages` and live `attachments` helpers for the current surface
 - assistant streaming is patched into the existing DOM at animation-frame cadence instead of full-thread rerenders
 - prompt history token counts are tracked, shown in the UI, and used for compaction decisions
 - the composer accepts attachments from either the file picker or direct file drag-and-drop onto the chat box

@@ -303,15 +303,10 @@ export const buildOnscreenAutomaticallyLoadedSkillsPromptSection = globalThis.sp
 
     return [
       "## Automatically Loaded Skills",
-      "These skill files are already loaded because their frontmatter sets `metadata.always_loaded: true`.",
-      ...alwaysLoadedSkills.flatMap((skill) => {
-        const description = skill.description ? ` | ${skill.description}` : "";
-
-        return [`### ${skill.path} | ${skill.name}${description}`, skill.content];
-      })
+      ...alwaysLoadedSkills.map((skill) => `path: ${skill.path}\n${skill.content}`)
     ]
       .filter(Boolean)
-      .join("\n\n");
+      .join("\n\n\n");
   }
 );
 

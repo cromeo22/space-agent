@@ -130,6 +130,9 @@ async function createAgentServer(overrides = {}) {
 
       try {
         await watchdog.start();
+        if (auth && typeof auth.initialize === "function") {
+          await auth.initialize();
+        }
 
         return await new Promise((resolve, reject) => {
           server.once("error", reject);

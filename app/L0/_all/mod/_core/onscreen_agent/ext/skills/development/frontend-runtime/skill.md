@@ -25,12 +25,16 @@ Use this skill when the task changes browser runtime behavior, framework-backed 
 - Current shared runtime surface includes:
   - `space.api`
   - `space.config`
+  - `space.chat` when the current agent surface publishes the active thread snapshot
   - `space.fw.createStore`
+  - `space.utils.markdown.render(text, target)`
   - `space.utils.markdown.parseDocument`
-  - `space.utils.yaml.parse`, `parseScalar`, and `serialize`
+  - `space.utils.yaml.parse` and `space.utils.yaml.stringify`
   - `space.proxy`
   - `space.download`
   - `space.fetchExternal(...)`
+
+`space.utils.markdown.render(...)` is the shared browser markdown wrapper. It inserts a `.markdown` root so the owning feature can style rendered markdown predictably.
 
 `space.api` includes attachment-style helpers such as `space.api.folderDownloadUrl(pathOrOptions)` when a feature needs a same-origin download URL instead of a fetched blob.
 

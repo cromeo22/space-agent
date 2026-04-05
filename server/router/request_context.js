@@ -56,7 +56,7 @@ function parseCookieHeader(cookieHeader) {
 function resolveRequestUser(headers, auth) {
   const cookies = parseCookieHeader(headers && headers.cookie);
   const user = auth && typeof auth.resolveUserFromCookies === "function"
-    ? auth.resolveUserFromCookies(cookies)
+    ? auth.resolveUserFromCookies(cookies, headers)
     : createAnonymousRequestUser();
 
   return {

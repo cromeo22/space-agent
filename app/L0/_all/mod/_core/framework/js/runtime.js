@@ -22,8 +22,9 @@ export function initializeRuntime(options = {}) {
     previousRuntime.utils && typeof previousRuntime.utils === "object" ? previousRuntime.utils : {};
   const previousMarkdownUtils =
     previousUtils.markdown && typeof previousUtils.markdown === "object" ? previousUtils.markdown : {};
-  const previousYamlUtils =
-    previousUtils.yaml && typeof previousUtils.yaml === "object" ? previousUtils.yaml : {};
+  const previousChat = previousRuntime.chat && typeof previousRuntime.chat === "object" ? previousRuntime.chat : null;
+  const legacyCurrentChat =
+    previousRuntime.currentChat && typeof previousRuntime.currentChat === "object" ? previousRuntime.currentChat : null;
   const serverConfigValues = getFrontendServerConfigValues();
 
   const runtime = {
@@ -52,18 +53,18 @@ export function initializeRuntime(options = {}) {
       ...previousFw,
       createStore
     },
+    chat: previousChat || legacyCurrentChat || undefined,
     proxyPath,
     utils: {
       ...previousUtils,
       markdown: {
         ...previousMarkdownUtils,
+        render: markdown.renderMarkdown,
         parseDocument: markdown.parseMarkdownDocument
       },
       yaml: {
-        ...previousYamlUtils,
         parse: yaml.parseSimpleYaml,
-        parseScalar: yaml.parseYamlScalar,
-        serialize: yaml.serializeSimpleYaml
+        stringify: yaml.serializeSimpleYaml
       }
     },
     fetchExternal(targetUrl, init) {
@@ -87,6 +88,8 @@ export function initializeRuntime(options = {}) {
       });
     }
   };
+
+  delete runtime.currentChat;
 
   globalThis.space = runtime;
   return runtime;

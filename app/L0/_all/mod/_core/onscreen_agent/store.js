@@ -6,6 +6,7 @@ import * as prompt from "/mod/_core/onscreen_agent/prompt.js";
 import * as skills from "/mod/_core/onscreen_agent/skills.js";
 import * as storage from "/mod/_core/onscreen_agent/storage.js";
 import * as agentView from "/mod/_core/onscreen_agent/view.js";
+import { renderMarkdown } from "/mod/_core/framework/js/markdown-frontmatter.js";
 import { positionPopover } from "/mod/_core/visual/chrome/popover.js";
 import { closeDialog, openDialog } from "/mod/_core/visual/forms/dialog.js";
 import { countTextTokens } from "/mod/_core/framework/js/token-count.js";
@@ -34,7 +35,7 @@ const UI_BUBBLE_AUTO_HIDE_PER_CHAR_MS = 28;
 const UI_BUBBLE_AUTO_HIDE_PER_WORD_MS = 260;
 const UI_BUBBLE_ENTER_DURATION_MS = 420;
 const UI_BUBBLE_EXIT_DURATION_MS = 180;
-const IDLE_HINT_BUBBLE_TEXT = "Drag me, tap me.";
+const IDLE_HINT_BUBBLE_TEXT = "**Drag** me, **tap** me.";
 const HISTORY_DIALOG_ELEMENT_ID = "onscreen-agent-history-dialog";
 const RAW_DIALOG_ELEMENT_ID = "onscreen-agent-raw-dialog";
 const SETTINGS_DIALOG_ELEMENT_ID = "onscreen-agent-settings-dialog";
@@ -149,20 +150,26 @@ function resolveDialogRef(refs, refKey, elementId) {
   return dialog;
 }
 
-function ensureCurrentChatRuntime(targetRuntime) {
-  if (!targetRuntime.currentChat || typeof targetRuntime.currentChat !== "object") {
-    targetRuntime.currentChat = {};
+function ensureChatRuntime(targetRuntime) {
+  const existingChatRuntime =
+    targetRuntime.chat && typeof targetRuntime.chat === "object"
+      ? targetRuntime.chat
+      : targetRuntime.currentChat && typeof targetRuntime.currentChat === "object"
+        ? targetRuntime.currentChat
+        : {};
+
+  targetRuntime.chat = existingChatRuntime;
+  delete targetRuntime.currentChat;
+
+  if (!Array.isArray(targetRuntime.chat.messages)) {
+    targetRuntime.chat.messages = [];
   }
 
-  if (!Array.isArray(targetRuntime.currentChat.messages)) {
-    targetRuntime.currentChat.messages = [];
+  if (!targetRuntime.chat.attachments || typeof targetRuntime.chat.attachments !== "object") {
+    targetRuntime.chat.attachments = createAttachmentRuntime();
   }
 
-  if (!targetRuntime.currentChat.attachments || typeof targetRuntime.currentChat.attachments !== "object") {
-    targetRuntime.currentChat.attachments = createAttachmentRuntime();
-  }
-
-  return targetRuntime.currentChat;
+  return targetRuntime.chat;
 }
 
 function createMessage(role, content, options = {}) {
@@ -532,6 +539,21 @@ function runOnNextFrame(callback) {
   });
 }
 
+function waitForDomUpdate() {
+  return new Promise((resolve) => {
+    if (typeof globalThis.Alpine?.nextTick === "function") {
+      globalThis.Alpine.nextTick(() => {
+        resolve();
+      });
+      return;
+    }
+
+    queueMicrotask(() => {
+      resolve();
+    });
+  });
+}
+
 function countDisplayLines(text) {
   const normalizedText =
     typeof text === "string" ? text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd() : "";
@@ -583,7 +605,7 @@ const model = {
   composerActionMenuRenderToken: 0,
   compactAssistantBubbleMessageId: "",
   configPersistTimer: 0,
-  currentChatRuntime: null,
+  chatRuntime: null,
   defaultSystemPrompt: "",
   displayMode: DISPLAY_MODE_COMPACT,
   draft: "",
@@ -605,6 +627,7 @@ const model = {
   isComposerActionMenuVisible: false,
   isInitialized: false,
   isLoadingDefaultSystemPrompt: false,
+  isShellVisible: false,
   isUiBubbleMounted: false,
   isSending: false,
   nextUiBubble: null,
@@ -692,13 +715,15 @@ const model = {
       {
         icon: this.compactButtonIcon,
         id: "compact-history",
-        label: "Compact context"
+        label: "Compact context",
+        disabled: this.isCompactDisabled
       },
       {
         danger: true,
         icon: "restart_alt",
         id: "clear",
-        label: "Clear chat"
+        label: "Clear chat",
+        disabled: this.isClearDisabled
       },
       {
         icon: "notes",
@@ -725,6 +750,10 @@ const model = {
 
   get isComposerInputDisabled() {
     return !this.isInitialized || this.isCompactingHistory;
+  },
+
+  get shouldRenderShell() {
+    return this.isShellVisible;
   },
 
   get shouldShowApiKeyWarning() {
@@ -782,6 +811,16 @@ const model = {
       this.isLoadingDefaultSystemPrompt ||
       this.isCompactingHistory ||
       !this.historyText.trim()
+    );
+  },
+
+  get isClearDisabled() {
+    return (
+      !this.isInitialized ||
+      this.isSending ||
+      this.isLoadingDefaultSystemPrompt ||
+      this.isCompactingHistory ||
+      !this.history.length
     );
   },
 
@@ -1330,6 +1369,7 @@ const model = {
     this.clearUiBubbleAutoHideTimer();
     this.uiBubbleText = nextUiBubble.text;
     this.isUiBubbleMounted = true;
+    this.renderUiBubbleContent();
     this.uiBubblePhase = "entering";
     this.uiBubbleEnterTimer = window.setTimeout(() => {
       this.uiBubbleEnterTimer = 0;
@@ -1366,16 +1406,37 @@ const model = {
       this.isUiBubbleMounted = false;
       this.uiBubblePhase = "";
       this.uiBubbleText = "";
+      this.renderUiBubbleContent();
       this.flushUiBubbleQueue();
     }, UI_BUBBLE_EXIT_DURATION_MS);
   },
 
-  syncCurrentChatRuntime() {
-    if (!this.currentChatRuntime) {
+  renderUiBubbleContent() {
+    const target = this.refs.uiBubbleContent;
+
+    if (!target) {
       return;
     }
 
-    this.currentChatRuntime.messages = this.history.map((message) => createRuntimeMessageSnapshot(message));
+    const bubbleText = normalizeUiBubbleText(this.uiBubbleText);
+
+    if (!bubbleText) {
+      target.replaceChildren();
+      return;
+    }
+
+    renderMarkdown(bubbleText, target, {
+      className: "onscreen-agent-ui-bubble-text",
+      tagName: "div"
+    });
+  },
+
+  syncCurrentChatRuntime() {
+    if (!this.chatRuntime) {
+      return;
+    }
+
+    this.chatRuntime.messages = this.history.map((message) => createRuntimeMessageSnapshot(message));
   },
 
   async replaceHistory(nextHistory) {
@@ -1466,7 +1527,7 @@ const model = {
 
     this.initializationPromise = (async () => {
       this.runtime = getRuntime();
-      this.currentChatRuntime = ensureCurrentChatRuntime(this.runtime);
+      this.chatRuntime = ensureChatRuntime(this.runtime);
       this.executionContext = execution.createExecutionContext({
         targetWindow: window
       });
@@ -1494,8 +1555,10 @@ const model = {
         await this.replaceHistory(storedHistory.map((message) => normalizeStoredMessage(message)));
         this.ensurePosition({
           persist: true,
-          reflow: true
+          reflow: false
         });
+        this.isShellVisible = true;
+        await waitForDomUpdate();
 
         this.status = "Loading default system prompt...";
         this.isLoadingDefaultSystemPrompt = true;
@@ -1524,6 +1587,11 @@ const model = {
           this.focusInput();
         }
       } catch (error) {
+        this.ensurePosition({
+          persist: false,
+          reflow: false
+        });
+        this.isShellVisible = true;
         this.status = error.message;
         this.render();
       }
@@ -1545,7 +1613,8 @@ const model = {
       scroller: refs.scroller || null,
       shell: refs.shell || null,
       settingsDialog: refs.settingsDialog || null,
-      thread: refs.thread || null
+      thread: refs.thread || null,
+      uiBubbleContent: refs.uiBubbleContent || null
     };
 
     if (!this.resizeHandler) {
@@ -1619,6 +1688,7 @@ const model = {
     this.ensurePosition({
       reflow: true
     });
+    this.renderUiBubbleContent();
     this.scheduleInteractionHint();
     void this.init();
   },
@@ -1720,7 +1790,8 @@ const model = {
       scroller: null,
       shell: null,
       settingsDialog: null,
-      thread: null
+      thread: null,
+      uiBubbleContent: null
     };
   },
 
@@ -1963,9 +2034,15 @@ const model = {
         return;
       }
 
-      agentView.updateStreamingAssistantMessage(this.refs.thread, pendingMessage, {
+      const didPatchStreamingRow = agentView.updateStreamingAssistantMessage(this.refs.thread, pendingMessage, {
         scroller: this.refs.scroller
       });
+
+      if (!didPatchStreamingRow) {
+        this.render({
+          preserveScroll: true
+        });
+      }
     });
   },
 
@@ -2224,7 +2301,7 @@ const model = {
         this.openAttachmentPicker();
         return;
       case "clear":
-        if (this.isSending || this.isLoadingDefaultSystemPrompt || this.isCompactingHistory) {
+        if (this.isClearDisabled) {
           return;
         }
 
@@ -2497,6 +2574,10 @@ const model = {
   },
 
   async handleClearClick() {
+    if (this.isClearDisabled) {
+      return;
+    }
+
     this.closeComposerActionMenu();
     this.closeRawDialog();
     this.rawOutputContent = "";
@@ -2513,8 +2594,8 @@ const model = {
       clearQueue: true
     });
 
-    if (this.currentChatRuntime?.attachments) {
-      this.currentChatRuntime.attachments.clear();
+    if (this.chatRuntime?.attachments) {
+      this.chatRuntime.attachments.clear();
     }
 
     if (this.executionContext) {
@@ -2772,11 +2853,11 @@ const model = {
   },
 
   async runConversationLoop(initialUserMessage) {
-    this.currentChatRuntime.attachments.rememberMessageAttachments(
+    this.chatRuntime.attachments.rememberMessageAttachments(
       initialUserMessage.id,
       initialUserMessage.attachments
     );
-    this.currentChatRuntime.attachments.setActiveMessage(initialUserMessage.id);
+    this.chatRuntime.attachments.setActiveMessage(initialUserMessage.id);
 
     let nextUserMessage = initialUserMessage;
     let emptyAssistantRetryCount = 0;
@@ -3152,7 +3233,7 @@ const model = {
     this.isSending = true;
     this.rerunningMessageId = messageId;
     const inputMessage = findConversationInputMessage(this.history, messageId);
-    this.currentChatRuntime.attachments.setActiveMessage(inputMessage?.id || "");
+    this.chatRuntime.attachments.setActiveMessage(inputMessage?.id || "");
     this.render({
       preserveScroll: true
     });

@@ -44,6 +44,7 @@ Space Agent already runs your JavaScript inside an async function.
 
 - Use top-level `await` directly.
 - Use a final top-level `return` when you need a value back.
+- For mutations, writes, or UI actions that should confirm success, prefer `return await ...` instead of firing a promise and then narrating success.
 - Do not wrap the whole snippet in `(async () => { ... })()`
 - If execution output shows `execution success` but no `result:` line, that means you did not return a value. Execute again and fix it.
 
@@ -135,14 +136,21 @@ Inside execution code you can use:
 - `localStorage`
 - `space`
 - `space.api`
+- `space.current`
+- `space.spaces`
+- `space.chat`
+- `space.utils.markdown`
 - `space.utils.yaml`
-- `space.currentChat`
-- `space.currentChat.messages`
-- `space.currentChat.attachments`
 
 External `fetch` requests are proxied by Space Agent, so browser fetch can reach remote URLs.
 
 If you need to reuse a value in a later execution, assign it to a normal top-level variable.
+
+For spaces and widgets:
+
+- prefer `return await space.current.renderWidget({ ... })` when creating or updating a widget
+- widget size is capped at `12` columns by `12` rows; do not request larger `cols` or `rows`
+- render widget output into `parent`; for markdown or long formatted copy, prefer `space.utils.markdown.render(markdownText, parent)`
 
 ## App File APIs
 
@@ -262,8 +270,7 @@ The browser runtime exposes lightweight YAML helpers at `space.utils.yaml`.
 Use:
 
 - `space.utils.yaml.parse(text)`
-- `space.utils.yaml.parseScalar(text)`
-- `space.utils.yaml.serialize(object)`
+- `space.utils.yaml.stringify(object)`
 
 These helpers are meant for simple framework-owned config files. They support the same lightweight subset used by the server-side YAML helper.
 
@@ -271,10 +278,10 @@ These helpers are meant for simple framework-owned config files. They support th
 
 Current chat state and user attachments are readable in JavaScript with:
 
-- `space.currentChat.messages`
-- `space.currentChat.attachments.current()`
-- `space.currentChat.attachments.forMessage("<message-id>")`
-- `space.currentChat.attachments.get("<attachment-id>")`
+- `space.chat.messages`
+- `space.chat.attachments.current()`
+- `space.chat.attachments.forMessage("<message-id>")`
+- `space.chat.attachments.get("<attachment-id>")`
 
 Each attachment supports:
 

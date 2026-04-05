@@ -15,3 +15,6 @@ tmp/
 !server/tmp/
 server/tmp/*
 !server/tmp/.gitignore
+!server/data/
+server/data/*
+!server/data/.gitignore

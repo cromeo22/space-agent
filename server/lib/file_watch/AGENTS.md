@@ -51,7 +51,8 @@ Current default handlers:
 `user_index`:
 
 - is rebuilt from `path_index`
-- derives user metadata, password verifier presence, and active sessions from logical `L2`
+- derives user metadata, sealed-password presence, and stored session graphs from logical `L2`
+- leaves password-record opening and session-signature validation to `server/lib/auth/service.js`
 
 Rules:
 

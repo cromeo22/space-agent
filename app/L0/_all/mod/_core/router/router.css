@@ -40,6 +40,12 @@ body.app-page-router > div[x-data] {
   overscroll-behavior: contain;
 }
 
+.router-stage[data-route-path="spaces"] {
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
 .router-stage-inner {
   display: grid;
   box-sizing: border-box;
@@ -47,14 +53,23 @@ body.app-page-router > div[x-data] {
   min-width: 0;
   min-height: 100%;
   margin: 0 auto;
-  padding: clamp(20px, 3vw, 34px) clamp(16px, 3vw, 32px) clamp(26px, 4vw, 40px);
+  padding: 0;
 }
 
 .router-stage-inner[data-route-path="spaces"] {
   width: 100%;
   max-width: none;
+  height: 100%;
+  min-height: 100%;
   margin: 0;
-  padding-inline: 0;
+  padding: 0;
+}
+
+.router-stage-inner[data-route-path="spaces"] > .router-route-frame,
+.router-stage-inner[data-route-path="spaces"] > .router-route-frame > .router-route-outlet,
+.router-stage-inner[data-route-path="spaces"] > .router-route-frame > .router-route-outlet > .router-route-mount {
+  height: 100%;
+  min-height: 100%;
 }
 
 .router-route-frame {

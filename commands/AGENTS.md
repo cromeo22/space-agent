@@ -277,8 +277,8 @@ Current behavior:
 
 - `create` creates the logical `L2/<username>/` root
 - `create` writes metadata to `L2/<username>/user.yaml`
-- `create` writes the password verifier to `L2/<username>/meta/password.json`
-- `create` initializes sessions in `L2/<username>/meta/logins.json`
+- `create` writes the backend-sealed password verifier envelope to `L2/<username>/meta/password.json`
+- `create` initializes signed session storage in `L2/<username>/meta/logins.json`
 - `create` ensures a `mod/` folder exists for the user
 - `password` rewrites the verifier and clears active sessions
 - `--full-name` sets `full_name` in `user.yaml`; if omitted it defaults to the user id
@@ -296,7 +296,7 @@ Guidance:
 
 - keep user creation idempotent only when explicitly requested; otherwise fail on existing users
 - password-changing commands must clear sessions unless the auth model is intentionally changed
-- keep auth storage layout consistent: metadata in `user.yaml`, auth state under `meta/`
+- keep auth storage layout consistent: metadata in `user.yaml`, auth state under `meta/`, and backend-only seal keys outside `app/`
 
 ### `group`
 

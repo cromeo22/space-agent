@@ -72,6 +72,7 @@ Parent and child split rules:
 - expose server API modules from `server/api/`
 - provide the outbound fetch proxy at `/api/proxy`
 - enforce auth, session, module, and app-file access boundaries
+- keep the backend-only auth secret outside the logical app tree, using shared environment injection via `SPACE_AUTH_PASSWORD_SEAL_KEY` and `SPACE_AUTH_SESSION_HMAC_KEY` for multi-instance deployments or local fallback storage under `server/data/`
 - manage `server/tmp/` as janitor-backed transient storage for low-RAM server-side artifacts such as folder-download archives
 - resolve runtime parameters from launch overrides, stored `.env` values, process environment variables, and schema defaults, including backend storage parameters such as `CUSTOMWARE_PATH`
 - expose `frontend_exposed` runtime parameters to page shells as injected meta tags
@@ -87,6 +88,7 @@ Current server layout:
 - `server/dev_server.js`: source-checkout dev supervisor used by `npm run dev`
 - `server/lib/utils/runtime_params.js`: shared runtime-parameter schema loading, validation, startup resolution, and frontend-exposure metadata
 - `server/pages/`: page shells for `/`, `/login`, `/enter`, and `/admin`, plus public shell assets under `server/pages/res/`
+- `server/data/`: gitignored backend-only secret storage used as the local fallback for auth keys when shared deployment secrets are not injected
 - `server/api/`: endpoint modules loaded by endpoint name
 - `server/router/`: top-level request routing, page handling, `/mod/...` serving, direct app-file fetches, request context, response helpers, proxy transport, and CORS handling
 - `server/lib/customware/`: logical app-path normalization, customware-root resolution, group and inheritance logic, extension override resolution, app-file access, and module management
@@ -110,6 +112,8 @@ Request routing order is:
 Core runtime contracts:
 
 - request identity is derived from the server-issued `space_session` cookie via router-side request context plus the auth service
+- the raw `space_session` cookie remains a browser bearer token, but `L2/<username>/meta/logins.json` stores only backend-keyed verifiers plus signed metadata, so reading app-side session files does not reveal a replayable cookie
+- password verifiers remain in `L2/<username>/meta/password.json`, but the SCRAM verifier is sealed with a backend-held key so the file is no longer self-sufficient
 - runtime auth may switch to a single-user mode where every request resolves to the implicit `user` principal
 - `/login` stays the public password-login entry
 - `/enter` is the firmware-backed launcher route for launcher-eligible sessions: always in single-user runtime, and also for authenticated multi-user requests; unauthenticated multi-user requests are redirected to `/login`
@@ -123,6 +127,7 @@ Core runtime contracts:
 - `/L0/...`, `/L1/...`, and `/L2/...` direct fetches require authentication and use the same read permission model as the file APIs
 - non-`/mod`, non-`/api`, and non-app-fetch requests stay limited to the root page shells and page actions owned by `server/pages/`
 - `/logout` is handled by the pages layer and clears the current session before redirecting to `/login`
+- autoscaled or multi-instance deployments must inject the same `SPACE_AUTH_PASSWORD_SEAL_KEY` and `SPACE_AUTH_SESSION_HMAC_KEY` values into every instance; the local `server/data/` fallback is for single-instance development and other shared-filesystem setups
 
 ## Shared Infrastructure Contracts
 
@@ -134,6 +139,7 @@ The server relies on a small set of shared infrastructure contracts. Do not re-i
 - `server/lib/customware/module_inheritance.js` and `server/lib/customware/extension_overrides.js` are the canonical module and extension resolution helpers
 - `server/lib/customware/module_manage.js` is the canonical module list, info, install, and remove helper
 - `server/lib/auth/service.js` is the canonical session and login service
+- `server/lib/auth/keys_manage.js` is the canonical backend auth-key loader, with shared-env override support and local `server/data/` fallback
 - `server/lib/utils/runtime_params.js` is the canonical parameter-resolution layer for startup env overrides, defaults, and frontend exposure
 - `server/lib/customware/layout.js` is the canonical logical-to-disk resolver for repo `L0` and configured writable `L1`/`L2` roots
 

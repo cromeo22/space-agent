@@ -1,17 +1,19 @@
 export const SPACES_ROUTE_PATH = "spaces";
-export const SPACES_SCHEMA = "spaces/v1";
+export const SPACES_SCHEMA = "spaces/v2";
+export const SPACE_WIDGET_SCHEMA = "space-widget/v1";
 export const WIDGET_API_VERSION = 1;
 
 export const SPACES_ROOT_PATH = "~/spaces/";
 export const SPACE_MANIFEST_FILE = "space.yaml";
 export const SPACE_WIDGETS_DIR = "widgets/";
+export const SPACE_WIDGET_FILE_EXTENSION = ".yaml";
 export const SPACE_DATA_DIR = "data/";
 export const SPACE_ASSETS_DIR = "assets/";
 
 export const GRID_COORD_MIN = -4096;
 export const GRID_COORD_MAX = 4096;
 export const MAX_WIDGET_COLS = 12;
-export const MAX_WIDGET_ROWS = 8;
+export const MAX_WIDGET_ROWS = 12;
 export const DEFAULT_WIDGET_POSITION = Object.freeze({
   col: 0,
   row: 0

@@ -25,7 +25,7 @@ function getRuntime() {
     typeof runtime.utils !== "object" ||
     !runtime.utils.yaml ||
     typeof runtime.utils.yaml.parse !== "function" ||
-    typeof runtime.utils.yaml.serialize !== "function"
+    typeof runtime.utils.yaml.stringify !== "function"
   ) {
     throw new Error("space.utils.yaml is not available.");
   }
@@ -95,7 +95,7 @@ export async function loadAdminChatConfig() {
 
 export async function saveAdminChatConfig(nextConfig) {
   const runtime = getRuntime();
-  const content = runtime.utils.yaml.serialize(buildStoredConfigPayload(nextConfig));
+  const content = runtime.utils.yaml.stringify(buildStoredConfigPayload(nextConfig));
 
   try {
     await runtime.api.fileWrite(config.ADMIN_CHAT_CONFIG_PATH, content);

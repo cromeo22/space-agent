@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { randomBytes } from "node:crypto";
 
 import { createPasswordVerifier } from "./passwords.js";
+import { loadAuthKeys } from "./keys_manage.js";
 import {
   buildUserAbsolutePath,
   ensureUserStructure,
@@ -56,7 +57,7 @@ function normalizeFullName(fullName, username) {
   return normalizedFullName || String(username || "");
 }
 
-function createUser(projectRoot, username, password, options = {}) {
+function createUserInternal(projectRoot, username, password, options = {}, authKeys) {
   const normalizedUsername = normalizeUsername(username);
 
   if (!normalizedUsername) {
@@ -81,7 +82,7 @@ function createUser(projectRoot, username, password, options = {}) {
   writeUserPasswordVerifier(
     projectRoot,
     normalizedUsername,
-    createPasswordVerifier(password),
+    createPasswordVerifier(password, authKeys),
     runtimeParams
   );
   writeUserLogins(projectRoot, normalizedUsername, {}, runtimeParams);
@@ -92,7 +93,12 @@ function createUser(projectRoot, username, password, options = {}) {
   };
 }
 
+function createUser(projectRoot, username, password, options = {}) {
+  return createUserInternal(projectRoot, username, password, options, loadAuthKeys(projectRoot));
+}
+
 function setUserPassword(projectRoot, username, password, options = {}) {
+  const authKeys = loadAuthKeys(projectRoot);
   const normalizedUsername = normalizeUsername(username);
   const runtimeParams = options.runtimeParams || null;
 
@@ -116,7 +122,7 @@ function setUserPassword(projectRoot, username, password, options = {}) {
   writeUserPasswordVerifier(
     projectRoot,
     normalizedUsername,
-    createPasswordVerifier(password),
+    createPasswordVerifier(password, authKeys),
     runtimeParams
   );
   writeUserLogins(projectRoot, normalizedUsername, {}, runtimeParams);
@@ -128,6 +134,7 @@ function setUserPassword(projectRoot, username, password, options = {}) {
 }
 
 function createGuestUser(projectRoot, options = {}) {
+  const authKeys = loadAuthKeys(projectRoot);
   const password = String(options.password || createRandomString(GENERATED_PASSWORD_LENGTH, GENERATED_PASSWORD_ALPHABET));
   const runtimeParams = options.runtimeParams || null;
 
@@ -142,7 +149,7 @@ function createGuestUser(projectRoot, options = {}) {
     }
 
     try {
-      createUser(projectRoot, username, password, { runtimeParams });
+      createUserInternal(projectRoot, username, password, { runtimeParams }, authKeys);
     } catch (error) {
       if (String(error?.message || "").startsWith("User already exists:")) {
         continue;

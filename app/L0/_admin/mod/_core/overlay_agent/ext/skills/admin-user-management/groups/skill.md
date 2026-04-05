@@ -49,7 +49,7 @@ return await space.api.fileWrite({
     { path: `L1/${groupId}/mod/` },
     {
       path: `L1/${groupId}/group.yaml`,
-      content: space.utils.yaml.serialize({
+      content: space.utils.yaml.stringify({
         included_groups: [],
         included_users: [],
         managing_groups: [],
@@ -72,7 +72,7 @@ const config = space.utils.yaml.parse(current.content || "");
 config.included_users = [...new Set([...(config.included_users || []), "alice"])].sort();
 config.managing_users = [...new Set([...(config.managing_users || []), "alice"])].sort();
 
-return await space.api.fileWrite(path, space.utils.yaml.serialize(config));
+return await space.api.fileWrite(path, space.utils.yaml.stringify(config));
 ```
 
 Use the same pattern for `included_groups` and `managing_groups`.
@@ -91,7 +91,7 @@ const path = "L1/_admin/group.yaml";
 const current = await space.api.fileRead(path);
 const config = space.utils.yaml.parse(current.content || "");
 config.included_users = [...new Set([...(config.included_users || []), "alice"])].sort();
-return await space.api.fileWrite(path, space.utils.yaml.serialize(config));
+return await space.api.fileWrite(path, space.utils.yaml.stringify(config));
 ```
 
 ## Mental Model

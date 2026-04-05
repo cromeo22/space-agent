@@ -1,7 +1,10 @@
 import {
+  DEFAULT_WIDGET_POSITION,
   SPACE_ASSETS_DIR,
   SPACE_DATA_DIR,
   SPACE_MANIFEST_FILE,
+  SPACE_WIDGET_FILE_EXTENSION,
+  SPACE_WIDGET_SCHEMA,
   SPACE_WIDGETS_DIR,
   SPACES_ROOT_PATH,
   SPACES_SCHEMA
@@ -13,6 +16,7 @@ import {
 } from "/mod/_core/spaces/layout.js";
 import {
   DEFAULT_WIDGET_SIZE,
+  defineWidget,
   normalizeWidgetSize,
   sizeToToken
 } from "/mod/_core/spaces/widget-sdk-core.js";
@@ -65,11 +69,14 @@ function uniqueList(values) {
   return [...new Set(values)];
 }
 
-const JSON_STRING_LITERAL_PATTERN = '"(?:\\\\.|[^"\\\\])*"';
-
 function parseManifestSpaceId(path) {
   const match = String(path || "").match(/\/spaces\/([^/]+)\/space\.yaml$/u);
   return match ? match[1] : "";
+}
+
+function parseWidgetIdFromPath(path) {
+  const match = String(path || "").match(/\/spaces\/[^/]+\/widgets\/([^/]+?)(?:\.yaml|\.js)$/u);
+  return match ? normalizeOptionalWidgetId(match[1]) : "";
 }
 
 function normalizeWidgetMap(source, parser = (value) => value) {
@@ -113,36 +120,48 @@ function normalizeWidgetIdList(values) {
   );
 }
 
-function cloneSpaceRecord(spaceRecord) {
+function cloneWidgetRecord(widgetRecord) {
   return {
-    ...spaceRecord,
-    widgetIds: [...spaceRecord.widgetIds],
-    minimizedWidgetIds: [...spaceRecord.minimizedWidgetIds],
-    widgetPositions: { ...spaceRecord.widgetPositions },
-    widgetSizes: { ...spaceRecord.widgetSizes },
-    widgetTitles: { ...spaceRecord.widgetTitles }
+    ...widgetRecord,
+    defaultPosition: normalizeWidgetPosition(widgetRecord?.defaultPosition, DEFAULT_WIDGET_POSITION),
+    defaultSize: normalizeWidgetSize(widgetRecord?.defaultSize, DEFAULT_WIDGET_SIZE)
   };
 }
 
-function formatSpaceListEntry(spaceRecord) {
+function cloneSpaceRecord(spaceRecord) {
+  return {
+    ...spaceRecord,
+    minimizedWidgetIds: [...spaceRecord.minimizedWidgetIds],
+    widgetIds: [...spaceRecord.widgetIds],
+    widgetPositions: { ...spaceRecord.widgetPositions },
+    widgetSizes: { ...spaceRecord.widgetSizes },
+    widgets: Object.fromEntries(
+      Object.entries(spaceRecord.widgets || {}).map(([widgetId, widgetRecord]) => [widgetId, cloneWidgetRecord(widgetRecord)])
+    )
+  };
+}
+
+function formatSpaceListEntry(spaceRecord, widgetCount = spaceRecord.widgetIds.length) {
   return {
     ...spaceRecord,
     updatedAtLabel: spaceRecord.updatedAt ? new Date(spaceRecord.updatedAt).toLocaleString() : "Unknown update time",
-    widgetCount: spaceRecord.widgetIds.length,
-    widgetCountLabel: `${spaceRecord.widgetIds.length} ${spaceRecord.widgetIds.length === 1 ? "widget" : "widgets"}`
+    widgetCount,
+    widgetCountLabel: `${widgetCount} ${widgetCount === 1 ? "widget" : "widgets"}`
   };
 }
 
 function normalizeManifest(rawManifest, fallbackId = "") {
   const now = new Date().toISOString();
   const id = normalizeSpaceId(rawManifest?.id || fallbackId || rawManifest?.title || `space-${Date.now().toString(36)}`);
-  const widgetIds = normalizeWidgetIdList(rawManifest?.widgets ?? rawManifest?.widgetIds);
+  const widgetIds = normalizeWidgetIdList(
+    rawManifest?.layout_order ?? rawManifest?.widget_order ?? rawManifest?.widgets ?? rawManifest?.widgetIds
+  );
   const minimizedWidgetIds = normalizeWidgetIdList(
     rawManifest?.minimized ?? rawManifest?.collapsed ?? rawManifest?.minimizedWidgetIds
-  ).filter((widgetId) => widgetIds.includes(widgetId));
+  );
   const widgetPositions = pickWidgetMap(
     normalizeWidgetMap(rawManifest?.positions ?? rawManifest?.widgetPositions, (value) =>
-      normalizeWidgetPosition(value, { col: 0, row: 0 })
+      normalizeWidgetPosition(value, DEFAULT_WIDGET_POSITION)
     ),
     widgetIds
   );
@@ -150,13 +169,10 @@ function normalizeManifest(rawManifest, fallbackId = "") {
     normalizeWidgetMap(rawManifest?.sizes ?? rawManifest?.widgetSizes, (value) => normalizeWidgetSize(value, DEFAULT_WIDGET_SIZE)),
     widgetIds
   );
-  const widgetTitles = pickWidgetMap(
-    normalizeWidgetMap(rawManifest?.titles ?? rawManifest?.widgetTitles, (value) => String(value || "").trim()),
-    widgetIds
-  );
 
   return {
     createdAt: String(rawManifest?.created_at || rawManifest?.createdAt || now),
+    dataPath: buildSpaceDataPath(id),
     id,
     manifestPath: buildSpaceManifestPath(id),
     minimizedWidgetIds,
@@ -167,8 +183,9 @@ function normalizeManifest(rawManifest, fallbackId = "") {
     widgetIds,
     widgetPositions,
     widgetSizes,
-    widgetTitles,
-    widgetsPath: buildSpaceWidgetsPath(id)
+    widgets: {},
+    widgetsPath: buildSpaceWidgetsPath(id),
+    assetsPath: buildSpaceAssetsPath(id)
   };
 }
 
@@ -179,9 +196,12 @@ function serializeManifest(spaceRecord) {
     id: spaceRecord.id,
     schema: SPACES_SCHEMA,
     title: spaceRecord.title,
-    updated_at: spaceRecord.updatedAt,
-    widgets: [...spaceRecord.widgetIds]
+    updated_at: spaceRecord.updatedAt
   };
+
+  if (spaceRecord.widgetIds.length) {
+    yamlSource.layout_order = [...spaceRecord.widgetIds];
+  }
 
   const sizeEntries = spaceRecord.widgetIds
     .filter((widgetId) => spaceRecord.widgetSizes[widgetId])
@@ -199,21 +219,211 @@ function serializeManifest(spaceRecord) {
     yamlSource.positions = Object.fromEntries(positionEntries);
   }
 
-  const minimizedWidgetIds = normalizeWidgetIdList(spaceRecord.minimizedWidgetIds);
+  const minimizedWidgetIds = normalizeWidgetIdList(spaceRecord.minimizedWidgetIds).filter((widgetId) =>
+    spaceRecord.widgetIds.includes(widgetId)
+  );
 
   if (minimizedWidgetIds.length) {
     yamlSource.minimized = minimizedWidgetIds;
   }
 
-  const titleEntries = spaceRecord.widgetIds
-    .filter((widgetId) => spaceRecord.widgetTitles[widgetId])
-    .map((widgetId) => [widgetId, spaceRecord.widgetTitles[widgetId]]);
+  return runtime.utils.yaml.stringify(yamlSource);
+}
 
-  if (titleEntries.length) {
-    yamlSource.titles = Object.fromEntries(titleEntries);
+function normalizeWidgetRecord(rawWidget, fallback = {}) {
+  const widgetId = normalizeWidgetId(rawWidget?.id || fallback.id || rawWidget?.name || "widget");
+  const name = String(rawWidget?.name || rawWidget?.title || fallback.name || formatTitleFromId(widgetId) || "Untitled Widget").trim();
+  const sizeSource =
+    rawWidget?.size ??
+    rawWidget?.default_size ??
+    rawWidget?.defaultSize ??
+    (rawWidget?.cols !== undefined || rawWidget?.rows !== undefined
+      ? {
+          cols: rawWidget?.cols,
+          rows: rawWidget?.rows
+        }
+      : fallback.defaultSize);
+  const positionSource =
+    rawWidget?.position ??
+    rawWidget?.default_position ??
+    rawWidget?.defaultPosition ??
+    (rawWidget?.col !== undefined || rawWidget?.row !== undefined
+      ? {
+          col: rawWidget?.col,
+          row: rawWidget?.row
+        }
+      : fallback.defaultPosition);
+
+  return {
+    defaultPosition: normalizeWidgetPosition(positionSource, DEFAULT_WIDGET_POSITION),
+    defaultSize: normalizeWidgetSize(sizeSource, DEFAULT_WIDGET_SIZE),
+    id: widgetId,
+    name: name || formatTitleFromId(widgetId) || "Untitled Widget",
+    path: String(fallback.path || ""),
+    rendererSource: normalizeRendererSource(rawWidget?.renderer ?? rawWidget?.render ?? fallback.rendererSource),
+    schema: String(rawWidget?.schema || fallback.schema || SPACE_WIDGET_SCHEMA)
+  };
+}
+
+function serializeWidgetRecord(widgetRecord) {
+  const runtime = ensureSpaceRuntime();
+  const yamlSource = {
+    cols: widgetRecord.defaultSize.cols,
+    id: widgetRecord.id,
+    name: widgetRecord.name,
+    renderer: widgetRecord.rendererSource,
+    rows: widgetRecord.defaultSize.rows,
+    schema: SPACE_WIDGET_SCHEMA
+  };
+
+  if (widgetRecord.defaultPosition.col !== DEFAULT_WIDGET_POSITION.col) {
+    yamlSource.col = widgetRecord.defaultPosition.col;
   }
 
-  return runtime.utils.yaml.serialize(yamlSource);
+  if (widgetRecord.defaultPosition.row !== DEFAULT_WIDGET_POSITION.row) {
+    yamlSource.row = widgetRecord.defaultPosition.row;
+  }
+
+  return runtime.utils.yaml.stringify(yamlSource);
+}
+
+function createHtmlRendererSource(htmlSource) {
+  return [
+    "(parent) => {",
+    `  parent.innerHTML = ${JSON.stringify(String(htmlSource || '<div class="spaces-raw-demo"></div>'))};`,
+    "}"
+  ].join("\n");
+}
+
+async function deleteAppPathIfExists(path) {
+  const runtime = ensureSpaceRuntime();
+
+  try {
+    await runtime.api.fileDelete(path);
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return false;
+    }
+
+    throw error;
+  }
+
+  return true;
+}
+
+function normalizeLegacyFunctionSource(sourceText) {
+  const trimmedSource = String(sourceText || "").trim();
+
+  if (!trimmedSource) {
+    return "";
+  }
+
+  if (
+    /^(async\s+)?function\b/u.test(trimmedSource) ||
+    trimmedSource.startsWith("(") ||
+    trimmedSource.includes("=>")
+  ) {
+    return trimmedSource;
+  }
+
+  const methodMatch = trimmedSource.match(/^(async\s+)?([A-Za-z_$][\w$]*)\s*\(/u);
+
+  if (methodMatch) {
+    const asyncPrefix = methodMatch[1] || "";
+    const methodName = methodMatch[2];
+    return `${asyncPrefix}function ${methodName}${trimmedSource.slice(methodMatch[0].length - 1)}`;
+  }
+
+  return trimmedSource;
+}
+
+export function normalizeRendererSource(value, fallback = "") {
+  const sourceText =
+    typeof value === "function"
+      ? value.toString()
+      : value ?? fallback ?? "";
+  const normalizedValue = normalizeLegacyFunctionSource(sourceText);
+
+  if (!normalizedValue) {
+    throw new Error("Widgets require a renderer function.");
+  }
+
+  return normalizedValue;
+}
+
+function createDefaultRendererSource() {
+  return [
+    "(parent) => {",
+    "  const copy = document.createElement(\"p\");",
+    "  copy.className = \"spaces-widget-placeholder-copy\";",
+    "  copy.textContent = \"Replace this widget renderer with your own DOM code.\";",
+    "  parent.appendChild(copy);",
+    "}"
+  ].join("\n");
+}
+
+function createWidgetRecordFromOptions(options = {}, fallback = {}) {
+  const rendererSource =
+    options.renderer ??
+    options.render ??
+    options.source ??
+    (options.html !== undefined ? createHtmlRendererSource(options.html) : fallback.rendererSource ?? createDefaultRendererSource());
+  const sizeSource =
+    options.size ??
+    (options.cols !== undefined || options.rows !== undefined
+      ? {
+          cols: options.cols,
+          rows: options.rows
+        }
+      : fallback.defaultSize);
+  const positionSource =
+    options.position ??
+    (options.col !== undefined || options.row !== undefined
+      ? {
+          col: options.col,
+          row: options.row
+        }
+      : fallback.defaultPosition);
+
+  return normalizeWidgetRecord(
+    {
+      col: options.col,
+      cols: options.cols,
+      defaultPosition: positionSource,
+      defaultSize: sizeSource,
+      id: options.widgetId || options.id || fallback.id,
+      name: options.name || options.title || fallback.name,
+      renderer: rendererSource,
+      row: options.row,
+      rows: options.rows,
+      schema: options.schema || fallback.schema || SPACE_WIDGET_SCHEMA
+    },
+    fallback
+  );
+}
+
+function parseWidgetSource(sourceText, fallback = {}) {
+  const runtime = ensureSpaceRuntime();
+  const normalizedSource = String(sourceText || "");
+  const parsed = runtime.utils.yaml.parse(normalizedSource);
+
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed) &&
+    (parsed.renderer !== undefined || parsed.render !== undefined || parsed.id !== undefined || parsed.name !== undefined)
+  ) {
+    return normalizeWidgetRecord(parsed, fallback);
+  }
+
+  return normalizeWidgetRecord(
+    {
+      id: fallback.id,
+      name: fallback.name,
+      renderer: normalizedSource
+    },
+    fallback
+  );
 }
 
 async function readManifestFile(spaceId) {
@@ -226,6 +436,15 @@ async function readManifestFile(spaceId) {
 async function writeManifestFile(spaceRecord) {
   const runtime = ensureSpaceRuntime();
   const normalizedRecord = normalizeManifest(spaceRecord, spaceRecord?.id);
+  normalizedRecord.widgetIds = [...spaceRecord.widgetIds];
+  normalizedRecord.widgetPositions = pickWidgetMap(spaceRecord.widgetPositions, normalizedRecord.widgetIds);
+  normalizedRecord.widgetSizes = pickWidgetMap(spaceRecord.widgetSizes, normalizedRecord.widgetIds);
+  normalizedRecord.minimizedWidgetIds = normalizeWidgetIdList(spaceRecord.minimizedWidgetIds).filter((widgetId) =>
+    normalizedRecord.widgetIds.includes(widgetId)
+  );
+  normalizedRecord.updatedAt = String(spaceRecord?.updatedAt || normalizedRecord.updatedAt);
+  normalizedRecord.createdAt = String(spaceRecord?.createdAt || normalizedRecord.createdAt);
+  normalizedRecord.title = String(spaceRecord?.title || normalizedRecord.title);
 
   await runtime.api.fileWrite({
     content: serializeManifest(normalizedRecord),
@@ -263,6 +482,163 @@ async function createUniqueSpaceId(baseId) {
   return nextId;
 }
 
+async function listSpaceWidgetPaths(spaceId) {
+  const runtime = ensureSpaceRuntime();
+
+  try {
+    const listResult = await runtime.api.fileList(buildSpaceWidgetsPath(spaceId), false);
+    return Array.isArray(listResult?.paths) ? listResult.paths : [];
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+async function loadLegacyWidgetDefinition(spaceId, widgetId) {
+  const moduleUrl = new URL(resolveAppUrl(buildLegacySpaceWidgetFilePath(spaceId, widgetId)), globalThis.location.origin);
+  moduleUrl.searchParams.set("v", `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+
+  const module = await import(moduleUrl.toString());
+  const candidate = module?.default ?? module?.widget ?? module;
+
+  if (!candidate || typeof candidate !== "object" || typeof candidate.render !== "function") {
+    throw new Error(`Legacy widget "${widgetId}" does not export a valid definition.`);
+  }
+
+  return defineWidget(candidate);
+}
+
+function createLegacyRendererSource(definition) {
+  const loadSource = typeof definition.load === "function" ? normalizeLegacyFunctionSource(definition.load.toString()) : "";
+  const renderSource = normalizeLegacyFunctionSource(definition.render.toString());
+
+  return [
+    "async (parent, space, context) => {",
+    loadSource ? `  const load = ${loadSource};` : "  const load = null;",
+    `  const render = ${renderSource};`,
+    "  const data = load ? await load(context) : undefined;",
+    "  return render({ ...context, data });",
+    "}"
+  ].join("\n");
+}
+
+async function migrateLegacyWidgetModules(spaceId) {
+  const runtime = ensureSpaceRuntime();
+  const widgetPaths = await listSpaceWidgetPaths(spaceId);
+  const legacyPaths = widgetPaths.filter((path) => String(path || "").endsWith(".js"));
+
+  if (!legacyPaths.length) {
+    return;
+  }
+
+  const nextFiles = [];
+  const deletePaths = [];
+
+  for (const legacyPath of legacyPaths) {
+    const widgetId = parseWidgetIdFromPath(legacyPath);
+
+    if (!widgetId) {
+      continue;
+    }
+
+    const definition = await loadLegacyWidgetDefinition(spaceId, widgetId);
+    const widgetRecord = normalizeWidgetRecord(
+      {
+        id: widgetId,
+        name: definition.title,
+        renderer: createLegacyRendererSource(definition),
+        size: definition.size
+      },
+      {
+        id: widgetId,
+        path: buildSpaceWidgetFilePath(spaceId, widgetId)
+      }
+    );
+
+    nextFiles.push({
+      content: serializeWidgetRecord(widgetRecord),
+      path: buildSpaceWidgetFilePath(spaceId, widgetId)
+    });
+    deletePaths.push(legacyPath);
+  }
+
+  if (nextFiles.length) {
+    await runtime.api.fileWrite({ files: nextFiles });
+  }
+
+  if (deletePaths.length) {
+    await runtime.api.fileDelete({ paths: deletePaths });
+  }
+}
+
+async function readWidgetFiles(spaceId) {
+  const runtime = ensureSpaceRuntime();
+  const widgetPaths = (await listSpaceWidgetPaths(spaceId)).filter((path) => String(path || "").endsWith(SPACE_WIDGET_FILE_EXTENSION));
+
+  if (!widgetPaths.length) {
+    return {};
+  }
+
+  const readResult = await runtime.api.fileRead({
+    files: widgetPaths
+  });
+  const files = Array.isArray(readResult?.files) ? readResult.files : [];
+  const widgets = {};
+
+  files.forEach((file) => {
+    const widgetId = parseWidgetIdFromPath(file?.path);
+
+    if (!widgetId) {
+      return;
+    }
+
+    const parsed = runtime.utils.yaml.parse(String(file?.content || ""));
+    widgets[widgetId] = normalizeWidgetRecord(parsed, {
+      id: widgetId,
+      path: buildSpaceWidgetFilePath(spaceId, widgetId)
+    });
+  });
+
+  return widgets;
+}
+
+function buildResolvedLayoutInputs(spaceRecord, overrides = {}) {
+  const widgetIds = normalizeWidgetIdList(overrides.widgetIds ?? spaceRecord.widgetIds).filter((widgetId) => spaceRecord.widgets[widgetId]);
+  const widgetPositions = {};
+  const widgetSizes = {};
+
+  widgetIds.forEach((widgetId) => {
+    const widgetRecord = overrides.widgets?.[widgetId] || spaceRecord.widgets?.[widgetId];
+    const defaultPosition = widgetRecord?.defaultPosition || DEFAULT_WIDGET_POSITION;
+    const defaultSize = widgetRecord?.defaultSize || DEFAULT_WIDGET_SIZE;
+    const sourcePositions = overrides.widgetPositions ?? spaceRecord.widgetPositions;
+    const sourceSizes = overrides.widgetSizes ?? spaceRecord.widgetSizes;
+
+    widgetPositions[widgetId] = normalizeWidgetPosition(sourcePositions?.[widgetId] ?? defaultPosition, defaultPosition);
+    widgetSizes[widgetId] = normalizeWidgetSize(sourceSizes?.[widgetId] ?? defaultSize, defaultSize);
+  });
+
+  return {
+    minimizedWidgetIds: normalizeWidgetIdList(overrides.minimizedWidgetIds ?? spaceRecord.minimizedWidgetIds).filter((widgetId) =>
+      widgetIds.includes(widgetId)
+    ),
+    widgetIds,
+    widgetPositions,
+    widgetSizes
+  };
+}
+
+function syncManifestWithResolvedLayout(spaceRecord, resolvedLayout) {
+  const widgetIds = normalizeWidgetIdList(spaceRecord.widgetIds).filter((widgetId) => spaceRecord.widgets[widgetId]);
+  spaceRecord.widgetIds = widgetIds;
+  spaceRecord.widgetPositions = pickWidgetMap(resolvedLayout.positions, widgetIds);
+  spaceRecord.widgetSizes = pickWidgetMap(spaceRecord.widgetSizes, widgetIds);
+  spaceRecord.minimizedWidgetIds = widgetIds.filter((widgetId) => resolvedLayout.minimizedMap[widgetId]);
+}
+
 export function normalizeSpaceId(value, fallback = "space") {
   const fallbackId = slugifySegment(fallback, "space");
   return slugifySegment(value, fallbackId);
@@ -291,6 +667,16 @@ export function buildSpaceWidgetsPath(spaceId) {
 }
 
 export function buildSpaceWidgetFilePath(spaceId, widgetId) {
+  const normalizedWidgetId = normalizeOptionalWidgetId(widgetId);
+
+  if (!normalizedWidgetId) {
+    throw new Error("A widgetId is required.");
+  }
+
+  return `${buildSpaceWidgetsPath(spaceId)}${normalizedWidgetId}${SPACE_WIDGET_FILE_EXTENSION}`;
+}
+
+function buildLegacySpaceWidgetFilePath(spaceId, widgetId) {
   const normalizedWidgetId = normalizeOptionalWidgetId(widgetId);
 
   if (!normalizedWidgetId) {
@@ -342,116 +728,44 @@ export function resolveAppUrl(path) {
   throw new Error(`Unsupported app path "${normalizedPath}".`);
 }
 
-export function buildSpaceWidgetModuleUrl(spaceId, widgetId, cacheToken = "") {
-  const widgetPath = buildSpaceWidgetFilePath(spaceId, widgetId);
-  const widgetUrl = new URL(resolveAppUrl(widgetPath), globalThis.location.origin);
-
-  if (cacheToken) {
-    widgetUrl.searchParams.set("v", String(cacheToken));
-  }
-
-  return widgetUrl.toString();
-}
-
 export function createWidgetSource(options = {}) {
-  const widgetTitle = String(options.title || "Untitled Widget").trim() || "Untitled Widget";
-  const sizeValue =
-    typeof options.size === "string" && options.size.trim()
-      ? options.size.trim()
-      : sizeToToken(normalizeWidgetSize(options.size, DEFAULT_WIDGET_SIZE));
-  const htmlSource = String(
-    options.html ||
-      `<div class="spaces-raw-demo">\n  <p>Replace this block or swap it for higher-level primitives.</p>\n</div>`
+  const widgetRecord = createWidgetRecordFromOptions(
+    {
+      ...options,
+      renderer:
+        options.renderer ??
+        options.render ??
+        options.source ??
+        (options.html !== undefined ? createHtmlRendererSource(options.html) : undefined)
+    },
+    {
+      id: normalizeWidgetId(options.widgetId || options.id || options.name || options.title || "widget"),
+      name: String(options.name || options.title || "Untitled Widget").trim() || "Untitled Widget",
+      rendererSource: createDefaultRendererSource()
+    }
   );
 
-  return `import { defineWidget, rawHtml } from "/mod/_core/spaces/widget-sdk.js";
-
-export default defineWidget({
-  apiVersion: 1,
-  title: ${JSON.stringify(widgetTitle)},
-  size: ${JSON.stringify(sizeValue)},
-  render() {
-    return rawHtml(${JSON.stringify(htmlSource)});
-  }
-});
-`;
+  return serializeWidgetRecord(widgetRecord);
 }
 
-function isLegacyGeneratedWidgetSource(source) {
-  const normalizedSource = String(source || "");
+export function previewWidgetRecord(options = {}, fallback = {}) {
+  const widgetFallbackId = normalizeWidgetId(options.widgetId || options.id || options.name || options.title || fallback.id || "widget");
 
-  return (
-    normalizedSource.includes('eyebrow: "Widget"') &&
-    normalizedSource.includes("This widget is stored as a JS module in the current space.") &&
-    normalizedSource.includes("return stack([") &&
-    normalizedSource.includes("rawHtml(")
-  );
-}
-
-function readJsonStringLiteral(source, pattern, fallback) {
-  const match = String(source || "").match(pattern);
-
-  if (!match) {
-    return fallback;
-  }
-
-  try {
-    return JSON.parse(match[1]);
-  } catch {
-    return fallback;
-  }
-}
-
-function migrateLegacyGeneratedWidgetSource(source) {
-  if (!isLegacyGeneratedWidgetSource(source)) {
-    return source;
-  }
-
-  const titlePattern = new RegExp(`^\\s*title:\\s*(${JSON_STRING_LITERAL_PATTERN})\\s*,`, "mu");
-  const sizePattern = new RegExp(`^\\s*size:\\s*(${JSON_STRING_LITERAL_PATTERN})\\s*,`, "mu");
-  const htmlPattern = new RegExp(`rawHtml\\(\\s*(${JSON_STRING_LITERAL_PATTERN})\\s*\\)`, "u");
-  const title = readJsonStringLiteral(source, titlePattern, "Untitled Widget");
-  const size = readJsonStringLiteral(source, sizePattern, sizeToToken(DEFAULT_WIDGET_SIZE));
-  const html = readJsonStringLiteral(source, htmlPattern, '<div class="spaces-raw-demo"></div>');
-
-  return createWidgetSource({
-    html,
-    size,
-    title
-  });
-}
-
-export async function maybeMigrateLegacyWidgetSource(spaceId, widgetId) {
-  const runtime = ensureSpaceRuntime();
-  const path = buildSpaceWidgetFilePath(spaceId, widgetId);
-  const response = await runtime.api.fileRead(path);
-  const source = String(response?.content || "");
-
-  if (!isLegacyGeneratedWidgetSource(source)) {
-    return {
-      migrated: false,
-      source
-    };
-  }
-
-  const migratedSource = migrateLegacyGeneratedWidgetSource(source);
-
-  if (migratedSource === source) {
-    return {
-      migrated: false,
-      source
-    };
-  }
-
-  await runtime.api.fileWrite({
-    content: migratedSource,
-    path
-  });
-
-  return {
-    migrated: true,
-    source: migratedSource
-  };
+  return options.source !== undefined
+    ? parseWidgetSource(options.source, {
+        ...fallback,
+        id: fallback.id || widgetFallbackId,
+        name: options.name || options.title || fallback.name || formatTitleFromId(widgetFallbackId),
+        rendererSource: fallback.rendererSource || createDefaultRendererSource()
+      })
+    : createWidgetRecordFromOptions(options, {
+        ...fallback,
+        defaultPosition: fallback.defaultPosition || DEFAULT_WIDGET_POSITION,
+        defaultSize: fallback.defaultSize || DEFAULT_WIDGET_SIZE,
+        id: fallback.id || widgetFallbackId,
+        name: fallback.name || formatTitleFromId(widgetFallbackId),
+        rendererSource: fallback.rendererSource || createDefaultRendererSource()
+      });
 }
 
 export async function listSpaces() {
@@ -460,9 +774,7 @@ export async function listSpaces() {
 
   try {
     const listResult = await runtime.api.fileList(SPACES_ROOT_PATH, true);
-    matchedPaths = Array.isArray(listResult?.paths)
-      ? listResult.paths.filter((path) => /\/spaces\/[^/]+\/space\.yaml$/u.test(String(path || "")))
-      : [];
+    matchedPaths = Array.isArray(listResult?.paths) ? listResult.paths : [];
   } catch (error) {
     if (isNotFoundError(error)) {
       return [];
@@ -471,12 +783,35 @@ export async function listSpaces() {
     throw error;
   }
 
-  if (!matchedPaths.length) {
+  const manifestPaths = matchedPaths.filter((path) => /\/spaces\/[^/]+\/space\.yaml$/u.test(String(path || "")));
+
+  if (!manifestPaths.length) {
     return [];
   }
 
+  const widgetCounts = {};
+  matchedPaths.forEach((path) => {
+    const normalizedPath = String(path || "");
+
+    if (!/\/spaces\/[^/]+\/widgets\/[^/]+\.(?:yaml|js)$/u.test(normalizedPath)) {
+      return;
+    }
+
+    const widgetSpaceId = normalizedSpaceIdFromWidgetPath(normalizedPath);
+
+    if (!widgetSpaceId) {
+      return;
+    }
+
+    if (!widgetCounts[widgetSpaceId]) {
+      widgetCounts[widgetSpaceId] = new Set();
+    }
+
+    widgetCounts[widgetSpaceId].add(parseWidgetIdFromPath(normalizedPath));
+  });
+
   const readResult = await runtime.api.fileRead({
-    files: matchedPaths
+    files: manifestPaths
   });
   const files = Array.isArray(readResult?.files) ? readResult.files : [];
 
@@ -484,7 +819,8 @@ export async function listSpaces() {
     .map((file) => {
       const fallbackId = parseManifestSpaceId(file?.path);
       const parsedContent = runtime.utils.yaml.parse(String(file?.content || ""));
-      return formatSpaceListEntry(normalizeManifest(parsedContent, fallbackId));
+      const normalizedSpace = normalizeManifest(parsedContent, fallbackId);
+      return formatSpaceListEntry(normalizedSpace, widgetCounts[normalizedSpace.id]?.size || normalizedSpace.widgetIds.length);
     })
     .sort((left, right) => {
       const leftTime = Date.parse(left.updatedAt || left.createdAt || "");
@@ -501,8 +837,26 @@ export async function listSpaces() {
     });
 }
 
+function normalizedSpaceIdFromWidgetPath(path) {
+  const match = String(path || "").match(/\/spaces\/([^/]+)\/widgets\/[^/]+\.(?:yaml|js)$/u);
+  return match ? normalizeOptionalSpaceId(match[1]) : "";
+}
+
 export async function readSpace(spaceId) {
-  return readManifestFile(spaceId);
+  const manifest = await readManifestFile(spaceId);
+  await migrateLegacyWidgetModules(manifest.id);
+  const widgets = await readWidgetFiles(manifest.id);
+  const discoveredWidgetIds = Object.keys(widgets);
+  const widgetIds = uniqueList([...manifest.widgetIds.filter((widgetId) => widgets[widgetId]), ...discoveredWidgetIds]);
+
+  return {
+    ...manifest,
+    minimizedWidgetIds: manifest.minimizedWidgetIds.filter((widgetId) => widgetIds.includes(widgetId)),
+    widgetIds,
+    widgetPositions: pickWidgetMap(manifest.widgetPositions, widgetIds),
+    widgetSizes: pickWidgetMap(manifest.widgetSizes, widgetIds),
+    widgets
+  };
 }
 
 export async function createSpace(options = {}) {
@@ -516,12 +870,7 @@ export async function createSpace(options = {}) {
       id,
       schema: SPACES_SCHEMA,
       title,
-      updated_at: timestamp,
-      minimized: [],
-      positions: {},
-      widgets: [],
-      sizes: {},
-      titles: {}
+      updated_at: timestamp
     },
     id
   );
@@ -535,14 +884,11 @@ export async function createSpace(options = {}) {
     ]
   });
 
-  const files = [
-    {
-      content: serializeManifest(manifest),
-      path: buildSpaceManifestPath(id)
-    }
-  ];
+  await runtime.api.fileWrite({
+    content: serializeManifest(manifest),
+    path: buildSpaceManifestPath(id)
+  });
 
-  await runtime.api.fileWrite({ files });
   return manifest;
 }
 
@@ -586,12 +932,12 @@ export async function saveSpaceLayout(options = {}) {
   const nextSpace = cloneSpaceRecord(currentSpace);
 
   if (Array.isArray(options.widgetIds)) {
-    nextSpace.widgetIds = normalizeWidgetIdList(options.widgetIds);
+    nextSpace.widgetIds = normalizeWidgetIdList(options.widgetIds).filter((widgetId) => nextSpace.widgets[widgetId]);
   }
 
   if (options.widgetPositions && typeof options.widgetPositions === "object") {
     nextSpace.widgetPositions = normalizeWidgetMap(options.widgetPositions, (value) =>
-      normalizeWidgetPosition(value, { col: 0, row: 0 })
+      normalizeWidgetPosition(value, DEFAULT_WIDGET_POSITION)
     );
   }
 
@@ -605,14 +951,10 @@ export async function saveSpaceLayout(options = {}) {
     nextSpace.minimizedWidgetIds = normalizeWidgetIdList(options.minimizedWidgetIds);
   }
 
-  const resolvedLayout = resolveSpaceLayout({
-    minimizedWidgetIds: nextSpace.minimizedWidgetIds,
-    widgetIds: nextSpace.widgetIds,
-    widgetPositions: nextSpace.widgetPositions,
-    widgetSizes: nextSpace.widgetSizes
-  });
+  const layoutInputs = buildResolvedLayoutInputs(nextSpace);
+  const resolvedLayout = resolveSpaceLayout(layoutInputs);
 
-  nextSpace.widgetPositions = resolvedLayout.positions;
+  syncManifestWithResolvedLayout(nextSpace, resolvedLayout);
   nextSpace.updatedAt = new Date().toISOString();
 
   return writeManifestFile(nextSpace);
@@ -627,75 +969,44 @@ export async function upsertWidget(options = {}) {
   }
 
   const currentSpace = cloneSpaceRecord(await readSpace(spaceId));
-  const widgetId = normalizeWidgetId(options.widgetId || options.title || "widget");
-  const hasExistingWidget = currentSpace.widgetIds.includes(widgetId);
+  const widgetFallbackId = normalizeWidgetId(options.widgetId || options.id || options.name || options.title || "widget");
+  const existingWidget = currentSpace.widgets[widgetFallbackId] || null;
+  const widgetRecord = previewWidgetRecord(options, {
+    ...existingWidget,
+    defaultPosition: existingWidget?.defaultPosition || DEFAULT_WIDGET_POSITION,
+    defaultSize: existingWidget?.defaultSize || DEFAULT_WIDGET_SIZE,
+    id: existingWidget?.id || widgetFallbackId,
+    name: options.name || options.title || existingWidget?.name || formatTitleFromId(widgetFallbackId),
+    path: buildSpaceWidgetFilePath(spaceId, widgetFallbackId),
+    rendererSource: existingWidget?.rendererSource || createDefaultRendererSource()
+  });
+  const widgetId = widgetRecord.id;
   const nextSpace = cloneSpaceRecord(currentSpace);
+  const hasExistingWidget = nextSpace.widgetIds.includes(widgetId);
+
+  nextSpace.widgets[widgetId] = {
+    ...widgetRecord,
+    path: buildSpaceWidgetFilePath(spaceId, widgetId)
+  };
 
   if (!hasExistingWidget) {
     nextSpace.widgetIds.push(widgetId);
   }
 
-  if (options.size !== undefined) {
-    nextSpace.widgetSizes[widgetId] = normalizeWidgetSize(options.size, currentSpace.widgetSizes[widgetId] || DEFAULT_WIDGET_SIZE);
-  } else if (!nextSpace.widgetSizes[widgetId] && !hasExistingWidget) {
-    nextSpace.widgetSizes[widgetId] = DEFAULT_WIDGET_SIZE;
-  }
-
-  if (options.title === null) {
-    delete nextSpace.widgetTitles[widgetId];
-  } else if (options.title !== undefined) {
-    nextSpace.widgetTitles[widgetId] = String(options.title || "").trim();
-  }
-
-  if (!nextSpace.widgetPositions[widgetId]) {
-    nextSpace.widgetPositions[widgetId] = { col: 0, row: 0 };
-  }
-
-  const resolvedLayout = resolveSpaceLayout({
-    anchorPosition: options.position,
-    anchorSize: nextSpace.widgetSizes[widgetId],
-    anchorWidgetId: widgetId,
-    minimizedWidgetIds: nextSpace.minimizedWidgetIds,
-    widgetIds: nextSpace.widgetIds,
-    widgetPositions: {
-      ...nextSpace.widgetPositions,
-      ...(options.position !== undefined
-        ? {
-            [widgetId]: normalizeWidgetPosition(options.position, nextSpace.widgetPositions[widgetId])
-          }
-        : {})
-    },
-    widgetSizes: nextSpace.widgetSizes
-  });
-
-  nextSpace.widgetPositions = resolvedLayout.positions;
-
+  nextSpace.widgetPositions = pickWidgetMap(nextSpace.widgetPositions, nextSpace.widgetIds);
+  nextSpace.widgetSizes = pickWidgetMap(nextSpace.widgetSizes, nextSpace.widgetIds);
   nextSpace.updatedAt = new Date().toISOString();
-
-  const source =
-    options.source !== undefined
-      ? String(options.source)
-      : hasExistingWidget
-        ? null
-        : createWidgetSource({
-            html: options.html,
-            size: options.size,
-            title: options.title || formatTitleFromId(widgetId)
-          });
 
   const files = [
     {
       content: serializeManifest(nextSpace),
       path: buildSpaceManifestPath(spaceId)
+    },
+    {
+      content: serializeWidgetRecord(nextSpace.widgets[widgetId]),
+      path: buildSpaceWidgetFilePath(spaceId, widgetId)
     }
   ];
-
-  if (source !== null) {
-    files.push({
-      content: source,
-      path: buildSpaceWidgetFilePath(spaceId, widgetId)
-    });
-  }
 
   await runtime.api.fileWrite({ files });
 
@@ -707,35 +1018,63 @@ export async function upsertWidget(options = {}) {
 }
 
 export async function removeWidget(options = {}) {
+  const result = await removeWidgets({
+    ...options,
+    widgetIds: [options.widgetId]
+  });
+
+  return {
+    space: result.space,
+    widgetId: result.widgetIds[0] || normalizeOptionalWidgetId(options.widgetId)
+  };
+}
+
+export async function removeWidgets(options = {}) {
   const runtime = ensureSpaceRuntime();
   const spaceId = normalizeOptionalSpaceId(options.spaceId);
-  const widgetId = normalizeOptionalWidgetId(options.widgetId);
+  const widgetIds = normalizeWidgetIdList(options.widgetIds ?? options.widgetId);
 
-  if (!spaceId || !widgetId) {
-    throw new Error("Both spaceId and widgetId are required to remove a widget.");
+  if (!spaceId) {
+    throw new Error("A target spaceId is required to remove widgets.");
   }
 
   const currentSpace = cloneSpaceRecord(await readSpace(spaceId));
+  const existingWidgetIds = new Set(currentSpace.widgetIds);
+  const missingWidgetIds = widgetIds.filter((widgetId) => !existingWidgetIds.has(widgetId));
 
-  if (!currentSpace.widgetIds.includes(widgetId)) {
-    throw new Error(`Widget "${widgetId}" was not found in space "${spaceId}".`);
+  if (!widgetIds.length) {
+    return {
+      space: currentSpace,
+      widgetIds: []
+    };
   }
 
-  currentSpace.widgetIds = currentSpace.widgetIds.filter((entry) => entry !== widgetId);
-  currentSpace.minimizedWidgetIds = currentSpace.minimizedWidgetIds.filter((entry) => entry !== widgetId);
-  delete currentSpace.widgetPositions[widgetId];
-  delete currentSpace.widgetSizes[widgetId];
-  delete currentSpace.widgetTitles[widgetId];
+  if (missingWidgetIds.length) {
+    throw new Error(`Widgets "${missingWidgetIds.join('", "')}" were not found in space "${spaceId}".`);
+  }
+
+  const widgetIdSet = new Set(widgetIds);
+  currentSpace.widgetIds = currentSpace.widgetIds.filter((entry) => !widgetIdSet.has(entry));
+  currentSpace.minimizedWidgetIds = currentSpace.minimizedWidgetIds.filter((entry) => !widgetIdSet.has(entry));
+  widgetIds.forEach((widgetId) => {
+    delete currentSpace.widgetPositions[widgetId];
+    delete currentSpace.widgetSizes[widgetId];
+    delete currentSpace.widgets[widgetId];
+  });
   currentSpace.updatedAt = new Date().toISOString();
 
   await runtime.api.fileWrite({
     content: serializeManifest(currentSpace),
     path: buildSpaceManifestPath(spaceId)
   });
-  await runtime.api.fileDelete(buildSpaceWidgetFilePath(spaceId, widgetId));
+
+  await runtime.api.fileDelete({
+    paths: widgetIds.map((widgetId) => buildSpaceWidgetFilePath(spaceId, widgetId))
+  });
+  await Promise.all(widgetIds.map((widgetId) => deleteAppPathIfExists(buildLegacySpaceWidgetFilePath(spaceId, widgetId))));
 
   return {
     space: currentSpace,
-    widgetId
+    widgetIds
   };
 }

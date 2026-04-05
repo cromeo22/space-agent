@@ -35,7 +35,7 @@ Current rules:
 
 - these are the only explicit anonymous endpoints today
 - login uses the shared auth service challenge and proof flow unless runtime config disables password login
-- successful login sets the `space_session` cookie through the auth service
+- successful login sets the `space_session` cookie through the auth service, while the durable session verifier stays in `L2/<username>/meta/logins.json`
 - `guest_create` creates an `L2` guest user and refreshes the watchdog only when runtime config allows guest accounts
 
 App-file endpoints:
@@ -82,7 +82,7 @@ Important notes:
 - `extensions_load` resolves HTML or JS extension request paths through the shared layered override system and supports grouped request batches
 - frontend HTML anchors and JS hooks currently resolve through `ext/html/...` and `ext/js/...` request paths respectively
 - `user_self_info` returns the authenticated user's derived identity plus a serialized frontend access-scope snapshot from the shared app-file permission model
-- `password_generate` is an authenticated utility endpoint and should stay narrow
+- `password_generate` is an authenticated utility endpoint that returns the backend-sealed `password.json` payload and should stay narrow
 
 ## Handler Contract
 

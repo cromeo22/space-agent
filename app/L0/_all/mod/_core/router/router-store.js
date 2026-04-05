@@ -122,6 +122,9 @@ const syncCurrentRoute = globalThis.space.extend(
     store.error = "";
     store.loading = true;
     store.current = route;
+    if (store.refs.viewport) {
+      store.refs.viewport.dataset.routePath = route.path;
+    }
     if (store.refs.stageInner) {
       store.refs.stageInner.dataset.routePath = route.path;
     }
@@ -289,6 +292,10 @@ const model = {
 
     if (this.refs.stageInner) {
       delete this.refs.stageInner.dataset.routePath;
+    }
+
+    if (this.refs.viewport) {
+      delete this.refs.viewport.dataset.routePath;
     }
 
     this.refs = {};

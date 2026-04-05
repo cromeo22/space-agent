@@ -1,5 +1,3 @@
-import { createPasswordVerifier } from "../lib/auth/passwords.js";
-
 function createHttpError(message, statusCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -19,11 +17,15 @@ export function post(context) {
     throw createHttpError("Password must be provided as a string.", 400);
   }
 
+  if (!context.auth || typeof context.auth.generatePasswordVerifier !== "function") {
+    throw createHttpError("Password generation is unavailable.", 500);
+  }
+
   return {
     headers: {
       "Cache-Control": "no-store"
     },
     status: 200,
-    body: createPasswordVerifier(payload.password)
+    body: context.auth.generatePasswordVerifier(payload.password)
   };
 }

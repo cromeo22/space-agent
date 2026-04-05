@@ -23,7 +23,7 @@ Examples:
 - The onscreen prompt catalog lists only top-level skills from `ext/skills/*/skill.md`.
 - Nested skills are not listed by default.
 - Any readable skill at any depth can still be auto-injected into the system prompt when its frontmatter sets `metadata.always_loaded: true`.
-- Auto-injected skills appear after the catalog in the `## Automatically Loaded Skills` prompt section.
+- Auto-injected skills appear after the catalog in the `## Automatically Loaded Skills` prompt section as repeated `path: <skill-id>` blocks followed by the full skill file content.
 - Routing skills should tell the agent which deeper skill ids to load next.
 - `space.skills.load("<path>")` loads the full skill file on demand and inserts its content into history through execution output.
 - A plain top-level `await space.skills.load("<path>")` is enough to inject the skill content; use `return` only if you also want the execution result value explicitly.

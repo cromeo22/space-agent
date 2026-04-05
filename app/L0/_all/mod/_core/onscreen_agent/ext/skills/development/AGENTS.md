@@ -54,6 +54,7 @@ Source-doc mirror map:
 - the router skill and `app-files-apis/skill.md` must tell the agent to inspect `space.api.userSelfInfo().scope` before choosing writable app roots
 - this skill set only authorizes frontend development in `app/`; the backend reference skill is for understanding contracts, not for editing `server/`, `commands/`, or `packaging/`
 - nested skills should stay focused on one area rather than repeating the whole architecture
+- `frontend-runtime/skill.md` must keep the shared runtime helper list current, including browser utilities such as `space.utils.markdown.render(...)`
 - when a complex area grows, add another nested skill instead of bloating the router skill
 - if a mirrored contract changes in a source doc, update the affected development skills in the same session even if this subtree itself was not directly edited
 

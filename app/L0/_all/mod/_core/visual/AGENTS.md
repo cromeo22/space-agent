@@ -44,7 +44,7 @@ Actions and forms:
 Conversation and surfaces:
 
 - `conversation/thread-view.js` exports `createAgentThreadView(config)` and is the shared renderer used by the admin agent and onscreen agent
-- `conversation/thread-view.js` supports an opt-in marked-backed assistant markdown mode through `config.renderMarkdownWithMarked`; that mode uses `_core/framework/js/marked.esm.js`, escapes raw HTML before parsing, strips unsafe markdown link or image URLs after render, wraps rendered tables in `.message-markdown-table-wrap` for feature-owned overflow styling, removes empty generated table headers, and lets the owning feature attach a local assistant markdown class through `config.assistantMarkdownClassName`
+- `conversation/thread-view.js` supports an opt-in chat-bubble markdown mode through `config.renderMarkdownWithMarked`; that mode routes settled non-streaming assistant and user bubbles through the shared framework markdown helper, escapes raw HTML before parsing, strips unsafe markdown link or image URLs after render, wraps rendered tables in `.message-markdown-table-wrap`, removes empty generated table headers, and lets the owning feature attach a local assistant markdown class through `config.assistantMarkdownClassName`
 - `surfaces/cards.css` owns shared panel or card wrappers such as `space-panel`
 
 ## Visual System Rules
@@ -59,6 +59,6 @@ Conversation and surfaces:
 
 - prefer semantic tokens from `_core/framework/css/colors.css`
 - prefer composing existing visual primitives over inventing near-duplicates
-- when a feature enables the shared marked-backed thread renderer, keep message-specific heading, table, and rich-content tuning in that feature's own stylesheet instead of baking feature-local markdown presentation into `_core/visual`
+- keep the baseline bubble markdown layout in `_core/visual/conversation/agent-thread.css`; add only feature-specific markdown tuning in the owning surface stylesheet
 - if a feature needs new shared chrome or surface behavior, add the smallest reusable primitive here and keep feature orchestration in the owning module
 - if a visual change affects app-wide direction, update `/app/AGENTS.md`; if it affects pre-auth mirrored shells, update `server/pages/AGENTS.md` too

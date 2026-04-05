@@ -47,6 +47,7 @@ Current behavior:
 
 - cookies are parsed once from the incoming request
 - the auth service resolves the current user from the `space_session` cookie or from the runtime single-user override
+- multi-user session auth hashes the incoming cookie through a backend-held key, matches the resulting verifier against `meta/logins.json`, and rejects unsigned or expired session records
 - the request context is stored in AsyncLocalStorage for the lifetime of the request
 - `ensureAuthenticatedRequestContext(...)` is the shared guard for authenticated routes
 

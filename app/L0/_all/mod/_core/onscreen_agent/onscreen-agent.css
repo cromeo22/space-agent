@@ -78,6 +78,17 @@
 .onscreen-agent-shell {
   position: fixed;
   pointer-events: none;
+  animation: onscreen-agent-shell-settle-in 180ms ease-out both;
+}
+
+@keyframes onscreen-agent-shell-settle-in {
+  from {
+    transform: translate3d(0, 4px, 0);
+  }
+
+  to {
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 .onscreen-agent-history-shell {
@@ -182,7 +193,7 @@
   box-shadow: var(--onscreen-agent-ui-bubble-shadow);
   color: var(--onscreen-agent-ui-bubble-text);
   font-size: 0.95rem;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.01em;
   line-height: 1.2;
   pointer-events: none;
@@ -298,9 +309,78 @@
 
 .onscreen-agent-ui-bubble-text {
   display: block;
-  white-space: break-spaces;
   overflow-wrap: anywhere;
   tab-size: 2;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text > :first-child {
+  margin-top: 0;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text > :last-child {
+  margin-bottom: 0;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text p,
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text ul,
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text ol,
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text pre,
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text blockquote {
+  margin: 0 0 0.55rem;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text ul,
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text ol {
+  padding-left: 1.1rem;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text strong,
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text b {
+  font-weight: 900;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text em,
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text i {
+  font-style: italic;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text code {
+  padding: 0.1em 0.34em;
+  border-radius: 0.35rem;
+  background: rgba(21, 38, 60, 0.08);
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text pre {
+  overflow: auto;
+  padding: 0.7rem 0.8rem;
+  border-radius: 0.8rem;
+  background: rgba(21, 38, 60, 0.08);
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text blockquote {
+  padding-left: 0.7rem;
+  border-left: 2px solid rgba(21, 38, 60, 0.18);
+}
+
+.onscreen-agent-ui-bubble .onscreen-agent-ui-bubble-text :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.45rem;
+  font-size: 1em;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .onscreen-agent-avatar-button,
@@ -703,6 +783,25 @@
 
 .onscreen-agent-action-menu {
   min-width: 198px;
+}
+
+.onscreen-agent-action-menu .space-popover-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onscreen-agent-shell {
+    animation: none;
+  }
+}
+
+.onscreen-agent-action-menu .space-popover-action:disabled:hover,
+.onscreen-agent-action-menu .space-popover-action:disabled:focus-visible {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  outline: none;
 }
 
 .onscreen-agent-popover-layer {

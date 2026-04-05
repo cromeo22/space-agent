@@ -21,6 +21,7 @@ Current route contract:
 
 - the dashboard is routed at `#/dashboard`
 - it should stay a small landing surface, not a second app shell
+- the dashboard must own its own page padding because the router shell no longer injects shared route padding
 
 Current extension seams:
 

@@ -29,20 +29,26 @@ function getRuntime() {
   return runtime;
 }
 
-function ensureCurrentChatRuntime(targetRuntime) {
-  if (!targetRuntime.currentChat || typeof targetRuntime.currentChat !== "object") {
-    targetRuntime.currentChat = {};
+function ensureChatRuntime(targetRuntime) {
+  const existingChatRuntime =
+    targetRuntime.chat && typeof targetRuntime.chat === "object"
+      ? targetRuntime.chat
+      : targetRuntime.currentChat && typeof targetRuntime.currentChat === "object"
+        ? targetRuntime.currentChat
+        : {};
+
+  targetRuntime.chat = existingChatRuntime;
+  delete targetRuntime.currentChat;
+
+  if (!Array.isArray(targetRuntime.chat.messages)) {
+    targetRuntime.chat.messages = [];
   }
 
-  if (!Array.isArray(targetRuntime.currentChat.messages)) {
-    targetRuntime.currentChat.messages = [];
+  if (!targetRuntime.chat.attachments || typeof targetRuntime.chat.attachments !== "object") {
+    targetRuntime.chat.attachments = createAttachmentRuntime();
   }
 
-  if (!targetRuntime.currentChat.attachments || typeof targetRuntime.currentChat.attachments !== "object") {
-    targetRuntime.currentChat.attachments = createAttachmentRuntime();
-  }
-
-  return targetRuntime.currentChat;
+  return targetRuntime.chat;
 }
 
 function createMessage(role, content, options = {}) {
@@ -211,7 +217,7 @@ function dataTransferContainsFiles(dataTransfer) {
 const model = {
   activeRequestController: null,
   attachmentDragDepth: 0,
-  currentChatRuntime: null,
+  chatRuntime: null,
   defaultSystemPrompt: "",
   draft: "",
   draftAttachments: [],
@@ -447,7 +453,7 @@ const model = {
 
     this.initializationPromise = (async () => {
       this.runtime = getRuntime();
-      this.currentChatRuntime = ensureCurrentChatRuntime(this.runtime);
+      this.chatRuntime = ensureChatRuntime(this.runtime);
       this.executionContext = execution.createExecutionContext({
         targetWindow: window
       });
@@ -560,11 +566,11 @@ const model = {
   },
 
   syncCurrentChatRuntime() {
-    if (!this.currentChatRuntime) {
+    if (!this.chatRuntime) {
       return;
     }
 
-    this.currentChatRuntime.messages = this.history.map((message) => createRuntimeMessageSnapshot(message));
+    this.chatRuntime.messages = this.history.map((message) => createRuntimeMessageSnapshot(message));
   },
 
   replaceHistory(nextHistory) {
@@ -1133,8 +1139,8 @@ const model = {
       immediate: true
     });
 
-    if (this.currentChatRuntime?.attachments) {
-      this.currentChatRuntime.attachments.clear();
+    if (this.chatRuntime?.attachments) {
+      this.chatRuntime.attachments.clear();
     }
 
     if (this.executionContext) {
@@ -1357,11 +1363,11 @@ const model = {
   },
 
   async runConversationLoop(initialUserMessage) {
-    this.currentChatRuntime.attachments.rememberMessageAttachments(
+    this.chatRuntime.attachments.rememberMessageAttachments(
       initialUserMessage.id,
       initialUserMessage.attachments
     );
-    this.currentChatRuntime.attachments.setActiveMessage(initialUserMessage.id);
+    this.chatRuntime.attachments.setActiveMessage(initialUserMessage.id);
 
     let nextUserMessage = initialUserMessage;
     let emptyAssistantRetryCount = 0;

@@ -63,8 +63,9 @@ The routed overlay anchors are the correct place for floating routed UI such as 
 Current shell layout note:
 
 - `.router-stage-inner` is the default centered content column for routed pages
-- the shell currently marks the active route path on `.router-stage-inner` via `data-route-path`
-- route-specific shell layout overrides that affect the routed frame width belong here in router-owned CSS; `_core/spaces` uses a full-width stage override keyed by `data-route-path="spaces"`, and the routed frame wrappers should keep stretching to full width so full-bleed routes are not trapped by intermediate grid items
+- the router shell does not provide shared route padding; routed pages must own their own content padding
+- the shell currently marks the active route path on both `.router-stage` and `.router-stage-inner` via `data-route-path`
+- route-specific shell layout overrides that affect routed frame width, routed height, or routed scroll ownership belong here in router-owned CSS; `_core/spaces` uses a zero-padding, full-height, overflow-hidden stage override keyed by `data-route-path="spaces"`, and the routed frame wrappers should keep stretching to full width and full height so full-bleed routes are not trapped by intermediate grid items
 
 ## Development Guidance
 

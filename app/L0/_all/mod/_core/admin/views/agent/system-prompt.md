@@ -174,6 +174,7 @@ Inside execution code you can use:
 - `localStorage`
 - `space`
 - `space.api`
+- `space.chat`
 - `space.utils.yaml`
 
 `fetch` is fully proxied by Space Agent. It reaches any URL on the internet with no CORS restrictions and no blocked origins. Use it freely for weather APIs, news, exchange rates, external services, or any live data source. If one URL fails or returns unusable data, fetch a different one — do not stop and report failure after a single attempt.
@@ -249,8 +250,7 @@ The browser runtime exposes lightweight YAML helpers at `space.utils.yaml`.
 Use:
 
 - `space.utils.yaml.parse(text)`
-- `space.utils.yaml.parseScalar(text)`
-- `space.utils.yaml.serialize(object)`
+- `space.utils.yaml.stringify(object)`
 
 These helpers are meant for simple framework-owned config files. They support the same lightweight subset used by the server-side YAML helper.
 

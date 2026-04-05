@@ -37,7 +37,8 @@ const threadView = createAgentThreadView({
   assistantAvatarPath: "/mod/_core/admin/res/helmet_no_bg_256.webp",
   autoResizeMaxHeight: 220,
   createEmptyState: createAdminEmptyState,
-  execution
+  execution,
+  renderMarkdownWithMarked: true
 });
 
 export const autoResizeTextarea = threadView.autoResizeTextarea;

@@ -1,9 +1,9 @@
 type SpaceExtend = typeof import("./L0/_all/mod/_core/framework/js/extensions.js").extend;
 type SpaceCreateStore = typeof import("./L0/_all/mod/_core/framework/js/AlpineStore.js").createStore;
 type SpaceYamlParse = typeof import("./L0/_all/mod/_core/framework/js/yaml-lite.js").parseSimpleYaml;
-type SpaceYamlParseScalar = typeof import("./L0/_all/mod/_core/framework/js/yaml-lite.js").parseYamlScalar;
-type SpaceYamlSerialize = typeof import("./L0/_all/mod/_core/framework/js/yaml-lite.js").serializeSimpleYaml;
+type SpaceYamlStringify = typeof import("./L0/_all/mod/_core/framework/js/yaml-lite.js").serializeSimpleYaml;
 type SpaceMarkdownParseDocument = typeof import("./L0/_all/mod/_core/framework/js/markdown-frontmatter.js").parseMarkdownDocument;
+type SpaceMarkdownRender = typeof import("./L0/_all/mod/_core/framework/js/markdown-frontmatter.js").renderMarkdown;
 
 type SpaceApiQueryValue =
   | string
@@ -140,12 +140,46 @@ type SpaceFw = {
 
 type SpaceYamlUtils = {
   parse: SpaceYamlParse;
-  parseScalar: SpaceYamlParseScalar;
-  serialize: SpaceYamlSerialize;
+  stringify: SpaceYamlStringify;
 };
 
 type SpaceMarkdownUtils = {
+  render: SpaceMarkdownRender;
   parseDocument: SpaceMarkdownParseDocument;
+};
+
+type SpaceChatAttachment = {
+  arrayBuffer(): Promise<ArrayBuffer>;
+  dataUrl(): Promise<string>;
+  file: File | null;
+  id: string;
+  json(): Promise<any>;
+  lastModified: number;
+  messageId: string;
+  name: string;
+  size: number;
+  text(): Promise<string>;
+  type: string;
+};
+
+type SpaceChatAttachments = {
+  current(): SpaceChatAttachment[];
+  forMessage(messageId: string): SpaceChatAttachment[];
+  get(attachmentId: string): SpaceChatAttachment | null;
+};
+
+type SpaceChatMessage = {
+  attachments: any[];
+  content: string;
+  id: string;
+  kind: string;
+  role: "assistant" | "user";
+  streaming: boolean;
+};
+
+type SpaceChat = {
+  attachments: SpaceChatAttachments;
+  messages: SpaceChatMessage[];
 };
 
 type SpaceUtils = {
@@ -162,6 +196,27 @@ type SpaceWidgetSize =
       rows?: number;
     };
 
+type SpaceWidgetPosition = {
+  col: number;
+  row: number;
+};
+
+type SpaceWidgetLayoutInput = {
+  col?: number;
+  cols?: number;
+  id?: string;
+  position?: Partial<SpaceWidgetPosition>;
+  row?: number;
+  rows?: number;
+  size?: SpaceWidgetSize;
+  widgetId?: string;
+};
+
+type SpaceWidgetRemovalResult = {
+  space: SpaceSpaceRecord;
+  widgetIds: string[];
+};
+
 type SpaceSpaceRecord = {
   createdAt: string;
   id: string;
@@ -170,7 +225,7 @@ type SpaceSpaceRecord = {
   title: string;
   updatedAt: string;
   widgetIds: string[];
-  widgetPositions: Record<string, { col: number; row: number }>;
+  widgetPositions: Record<string, SpaceWidgetPosition>;
   widgetSizes: Record<string, { cols: number; rows: number }>;
   widgetTitles: Record<string, string>;
 };
@@ -191,20 +246,24 @@ type SpaceSpacesNamespace = {
   getCurrentSpace(): SpaceSpaceRecord | null;
   listSpaces(): Promise<Array<SpaceSpaceRecord & { updatedAtLabel: string; widgetCount: number; widgetCountLabel: string }>>;
   openSpace(spaceId: string, options?: { replace?: boolean }): Promise<void>;
-  primitives: Record<string, (...args: any[]) => any>;
   readSpace(spaceId: string): Promise<SpaceSpaceRecord>;
+  rearrangeWidgets(options: { spaceId?: string; widgetLayouts?: SpaceWidgetLayoutInput[]; widgets: SpaceWidgetLayoutInput[] }): Promise<SpaceSpaceRecord>;
   reloadCurrentSpace(): Promise<SpaceSpaceRecord>;
+  reloadWidget(widgetIdOrOptions: string | { spaceId?: string; widgetId: string }): Promise<SpaceSpaceRecord>;
   removeWidget(options: { spaceId?: string; widgetId: string }): Promise<{ space: SpaceSpaceRecord; widgetId: string }>;
+  removeWidgets(options: { spaceId?: string; widgetIds: string[] }): Promise<SpaceWidgetRemovalResult>;
+  removeAllWidgets(spaceIdOrOptions?: string | { id?: string; spaceId?: string }): Promise<SpaceWidgetRemovalResult>;
   resolveAppUrl(path: string): string;
   saveSpaceLayout(options: {
     id: string;
     minimizedWidgetIds?: string[];
     widgetIds?: string[];
-    widgetPositions?: Record<string, { col?: number; row?: number }>;
+    widgetPositions?: Record<string, Partial<SpaceWidgetPosition>>;
     widgetSizes?: Record<string, SpaceWidgetSize>;
   }): Promise<SpaceSpaceRecord>;
   saveSpaceMeta(options: { id: string; title?: string }): Promise<SpaceSpaceRecord>;
   sizeToToken(size: SpaceWidgetSize): string;
+  toggleWidgets(options: { spaceId?: string; widgetIds: string[] }): Promise<SpaceSpaceRecord>;
   upsertWidget(options: {
     html?: string;
     size?: SpaceWidgetSize;
@@ -214,12 +273,12 @@ type SpaceSpacesNamespace = {
     widgetId?: string;
   }): Promise<{ space: SpaceSpaceRecord; widgetId: string; widgetPath: string }>;
   widgetApiVersion: number;
-  widgetSdkUrl: string;
   [key: string]: any;
 };
 
 type SpaceRuntime = {
   api?: SpaceApi;
+  chat?: SpaceChat;
   extend: SpaceExtend;
   fw?: SpaceFw;
   spaces?: SpaceSpacesNamespace;

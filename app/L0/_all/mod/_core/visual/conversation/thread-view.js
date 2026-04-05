@@ -1,44 +1,15 @@
-import { marked } from "/mod/_core/framework/js/marked.esm.js";
+import { renderMarkdown } from "/mod/_core/framework/js/markdown-frontmatter.js";
 
 const EXECUTION_STATUS_LINE_PATTERN = /^execution\s+(.+)$/iu;
 const EXECUTION_PRINT_LINE_PATTERN = /^(log|info|warn|error|debug|dir|table|assert):\s*/iu;
 const ORDERED_LIST_LINE_PATTERN = /^\d+\.\s+/u;
-const SAFE_MARKDOWN_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
 const STICKY_SCROLL_THRESHOLD = 32;
-
-function escapeHtml(text) {
-  return String(text || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
 function joinClassNames(...classNames) {
   return classNames
     .map((className) => (typeof className === "string" ? className.trim() : ""))
     .filter(Boolean)
     .join(" ");
-}
-
-function isSafeMarkdownUrl(value) {
-  const normalizedValue = typeof value === "string" ? value.trim() : "";
-
-  if (!normalizedValue) {
-    return false;
-  }
-
-  if (normalizedValue.startsWith("#") || normalizedValue.startsWith("/") || normalizedValue.startsWith("./") || normalizedValue.startsWith("../")) {
-    return true;
-  }
-
-  try {
-    const parsed = new URL(normalizedValue, window.location.href);
-    return SAFE_MARKDOWN_PROTOCOLS.has(parsed.protocol);
-  } catch {
-    return false;
-  }
 }
 
 function defaultFormatAttachmentSize(bytes) {
@@ -428,56 +399,6 @@ export function createAgentThreadView(config = {}) {
     });
   }
 
-  function finalizeMarkdownLinks(container) {
-    container.querySelectorAll("a[href]").forEach((link) => {
-      const href = link.getAttribute("href");
-
-      if (!isSafeMarkdownUrl(href)) {
-        link.replaceWith(document.createTextNode(link.textContent || href || ""));
-        return;
-      }
-
-      link.target = "_blank";
-      link.rel = "noreferrer";
-    });
-
-    container.querySelectorAll("img[src]").forEach((image) => {
-      const source = image.getAttribute("src");
-
-      if (!isSafeMarkdownUrl(source)) {
-        image.remove();
-        return;
-      }
-
-      image.loading = "lazy";
-      image.referrerPolicy = "no-referrer";
-    });
-  }
-
-  function hasVisibleMarkdownHeaderText(cell) {
-    return typeof cell?.textContent === "string" && cell.textContent.trim().length > 0;
-  }
-
-  function finalizeMarkdownTables(container) {
-    container.querySelectorAll("table").forEach((table) => {
-      const header = table.querySelector("thead");
-      const headerCells = Array.from(header?.querySelectorAll("th") || []);
-
-      if (header && headerCells.length && headerCells.every((cell) => !hasVisibleMarkdownHeaderText(cell))) {
-        header.remove();
-      }
-
-      if (table.parentElement?.classList.contains("message-markdown-table-wrap")) {
-        return;
-      }
-
-      const wrapper = document.createElement("div");
-      wrapper.className = "message-markdown-table-wrap";
-      table.replaceWith(wrapper);
-      wrapper.append(table);
-    });
-  }
-
   function createLegacyFormattedMessageBlock(text, className) {
     const normalizedText = String(text || "").trim();
 
@@ -521,39 +442,20 @@ export function createAgentThreadView(config = {}) {
     return content.childNodes.length ? content : null;
   }
 
-  function createMarkedMessageBlock(text, className) {
+  function createSharedMarkdownBlock(text, className) {
     const normalizedText = String(text || "").trim();
 
     if (!normalizedText) {
       return null;
     }
 
-    const content = document.createElement("div");
-    content.className = className;
-
-    try {
-      const renderedHtml = marked.parse(escapeHtml(normalizedText), {
-        async: false,
-        breaks: true,
-        gfm: true
-      });
-
-      if (renderedHtml && typeof renderedHtml.then === "function") {
-        return createLegacyFormattedMessageBlock(normalizedText, className);
-      }
-
-      content.innerHTML = String(renderedHtml || "");
-      finalizeMarkdownLinks(content);
-      finalizeMarkdownTables(content);
-      return content.childNodes.length ? content : null;
-    } catch {
-      return createLegacyFormattedMessageBlock(normalizedText, className);
-    }
+    const content = renderMarkdown(normalizedText, null, { className });
+    return content.childNodes.length ? content : null;
   }
 
   function createFormattedMessageBlock(text, className = "message-content message-markdown") {
     if (renderMarkdownWithMarked) {
-      return createMarkedMessageBlock(text, className);
+      return createSharedMarkdownBlock(text, className);
     }
 
     return createLegacyFormattedMessageBlock(text, className);
@@ -959,10 +861,18 @@ export function createAgentThreadView(config = {}) {
     const attachmentList = createAttachmentList(message.attachments);
 
     if (hasTextContent) {
-      const textBlock = document.createElement("p");
-      textBlock.className = "message-content";
-      textBlock.textContent = message.content || (message.streaming ? "Streaming..." : "");
-      bubble.append(textBlock);
+      if (renderMarkdownWithMarked && !message.streaming) {
+        const textBlock = createFormattedMessageBlock(message.content || "", "message-content message-markdown");
+
+        if (textBlock) {
+          bubble.append(textBlock);
+        }
+      } else {
+        const textBlock = document.createElement("p");
+        textBlock.className = "message-content";
+        textBlock.textContent = message.content || (message.streaming ? "Streaming..." : "");
+        bubble.append(textBlock);
+      }
     }
 
     if (attachmentList) {

@@ -1,6 +1,7 @@
 <html>
   <head>
     <link rel="stylesheet" href="/mod/_core/spaces/spaces.css" />
+    <link rel="stylesheet" href="/mod/_core/spaces/widget-content.css" />
     <script type="module" src="/mod/_core/spaces/store.js"></script>
   </head>
   <body>
@@ -17,9 +18,9 @@
             x-show="$store.spacesPage.currentSpace?.widgetIds?.length"
             type="button"
             class="spaces-canvas-debug-button"
-            @click="void $store.spacesPage.consolidateCurrentSpace()"
+            @click="void $store.spacesPage.rearrangeCurrentSpace()"
           >
-            Consolidate
+            Rearrange
           </button>
           <div class="spaces-widget-grid" x-ref="grid" :aria-busy="String($store.spacesPage.loadingSpace)"></div>
         </section>

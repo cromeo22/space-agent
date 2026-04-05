@@ -54,7 +54,7 @@ function getRuntime() {
     typeof runtime.utils !== "object" ||
     !runtime.utils.yaml ||
     typeof runtime.utils.yaml.parse !== "function" ||
-    typeof runtime.utils.yaml.serialize !== "function"
+    typeof runtime.utils.yaml.stringify !== "function"
   ) {
     throw new Error("space.utils.yaml is not available.");
   }
@@ -154,7 +154,7 @@ export async function loadOnscreenAgentConfig() {
 
 export async function saveOnscreenAgentConfig(nextConfig) {
   const runtime = getRuntime();
-  const content = runtime.utils.yaml.serialize(buildStoredConfigPayload(nextConfig));
+  const content = runtime.utils.yaml.stringify(buildStoredConfigPayload(nextConfig));
 
   try {
     await runtime.api.fileWrite(config.ONSCREEN_AGENT_CONFIG_PATH, content);

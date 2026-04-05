@@ -47,11 +47,12 @@ These endpoints are thin wrappers over shared helpers in `server/lib/customware/
 
 ## Auth And User Storage
 
-- The server issues the `space_session` cookie.
+- The server issues the `space_session` cookie and validates it by hashing it with a backend-held secret.
 - User metadata lives at `L2/<username>/user.yaml`.
-- Password verifier lives at `L2/<username>/meta/password.json`.
-- Active sessions live at `L2/<username>/meta/logins.json`.
+- `L2/<username>/meta/password.json` stores a server-sealed SCRAM verifier envelope, not a self-sufficient plaintext verifier.
+- `L2/<username>/meta/logins.json` stores backend-keyed session verifiers plus signed session metadata.
 - User-owned modules live under `L2/<username>/mod/`.
+- Backend auth keys come from shared environment injection through `SPACE_AUTH_PASSWORD_SEAL_KEY` and `SPACE_AUTH_SESSION_HMAC_KEY` for multi-instance deployments, or from the local fallback `server/data/auth_keys.json` during single-instance development.
 
 ## Why Frontend Developers Need This
 

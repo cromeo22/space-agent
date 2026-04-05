@@ -62,6 +62,28 @@ function splitInlineList(sourceText) {
   return parts;
 }
 
+function createBlockState(options = {}) {
+  return {
+    containerKey: options.containerKey || null,
+    indent: Number.isFinite(options.indent) ? options.indent : 0,
+    key: options.key || "",
+    lines: []
+  };
+}
+
+function assignNestedValue(target, containerKey, key, value) {
+  if (!containerKey) {
+    target[key] = value;
+    return;
+  }
+
+  if (!target[containerKey] || typeof target[containerKey] !== "object" || Array.isArray(target[containerKey])) {
+    target[containerKey] = {};
+  }
+
+  target[containerKey][key] = value;
+}
+
 export function parseYamlScalar(value) {
   const trimmed = String(value || "").trim();
 
@@ -99,10 +121,36 @@ export function parseYamlScalar(value) {
 export function parseSimpleYaml(sourceText) {
   const result = {};
   let currentKey = null;
+  let blockState = null;
+
+  const finalizeBlock = () => {
+    if (!blockState) {
+      return;
+    }
+
+    assignNestedValue(result, blockState.containerKey, blockState.key, blockState.lines.join("\n"));
+    blockState = null;
+  };
 
   String(sourceText || "")
     .split(/\r?\n/u)
     .forEach((rawLine) => {
+      const rawIndent = rawLine.match(/^\s*/u)?.[0].length || 0;
+
+      if (blockState) {
+        if (!rawLine.trim()) {
+          blockState.lines.push("");
+          return;
+        }
+
+        if (rawIndent >= blockState.indent) {
+          blockState.lines.push(rawLine.slice(blockState.indent));
+          return;
+        }
+
+        finalizeBlock();
+      }
+
       const withoutComment = stripInlineComment(rawLine);
       const trimmedLine = withoutComment.trimEnd();
       const indent = withoutComment.match(/^\s*/u)?.[0].length || 0;
@@ -124,6 +172,16 @@ export function parseSimpleYaml(sourceText) {
           return;
         }
 
+        if (value === "|") {
+          result[key] = "";
+          currentKey = key;
+          blockState = createBlockState({
+            indent: indent + 2,
+            key
+          });
+          return;
+        }
+
         result[key] = parseYamlScalar(value);
         return;
       }
@@ -140,6 +198,16 @@ export function parseSimpleYaml(sourceText) {
 
         if (!result[currentKey] || typeof result[currentKey] !== "object" || Array.isArray(result[currentKey])) {
           result[currentKey] = {};
+        }
+
+        if (value === "|") {
+          result[currentKey][key] = "";
+          blockState = createBlockState({
+            containerKey: currentKey,
+            indent: indent + 2,
+            key
+          });
+          return;
         }
 
         result[currentKey][key] = value === undefined || value === "" ? [] : parseYamlScalar(value);
@@ -163,6 +231,8 @@ export function parseSimpleYaml(sourceText) {
       }
     });
 
+  finalizeBlock();
+
   return result;
 }
 
@@ -175,6 +245,10 @@ function formatYamlScalar(value) {
 
   if (!text) {
     return '""';
+  }
+
+  if (text.includes("\n")) {
+    return null;
   }
 
   if (/^[A-Za-z0-9._/@:+-]+$/u.test(text)) {
@@ -203,6 +277,14 @@ export function serializeSimpleYaml(source) {
       lines.push(`${prefix}${key}:`);
       rawValue.forEach((item) => {
         lines.push(`${prefix}  - ${formatYamlScalar(item)}`);
+      });
+      return;
+    }
+
+    if (typeof rawValue === "string" && rawValue.includes("\n")) {
+      lines.push(`${prefix}${key}: |`);
+      rawValue.split("\n").forEach((line) => {
+        lines.push(`${prefix}  ${line}`);
       });
       return;
     }

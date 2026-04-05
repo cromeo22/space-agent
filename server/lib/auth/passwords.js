@@ -1,9 +1,21 @@
-import { createHash, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  pbkdf2Sync,
+  randomBytes,
+  timingSafeEqual
+} from "node:crypto";
 
 const PASSWORD_SCHEME = "scram-sha-256";
 const PASSWORD_HASH = "sha256";
 const PASSWORD_ITERATIONS = 310_000;
 const PASSWORD_KEY_LENGTH = 32;
+const PASSWORD_RECORD_AAD_PREFIX = "space-password-record-v1";
+const PASSWORD_RECORD_STORAGE = "server-sealed-aes-256-gcm";
+const PASSWORD_SEAL_ALGORITHM = "aes-256-gcm";
+const PASSWORD_SEAL_IV_LENGTH = 12;
 const CLIENT_KEY_LABEL = "Client Key";
 const SERVER_KEY_LABEL = "Server Key";
 const LOGIN_AUTH_MESSAGE_PREFIX = "space-login-v1";
@@ -46,8 +58,29 @@ function normalizeIterations(value) {
   return Number.isInteger(iterations) && iterations > 0 ? iterations : 0;
 }
 
-function normalizeVerifierRecord(record) {
-  if (!record || typeof record !== "object") {
+function normalizeKeyText(value) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  return decodeBase64Url(normalized).length === PASSWORD_KEY_LENGTH ? normalized : "";
+}
+
+function buildPasswordRecordAad(record = {}) {
+  return Buffer.from(
+    JSON.stringify({
+      iterations: String(record.iterations || ""),
+      prefix: PASSWORD_RECORD_AAD_PREFIX,
+      salt: String(record.salt || ""),
+      scheme: String(record.scheme || "")
+    })
+  );
+}
+
+function normalizeStoredPasswordRecord(record, options = {}) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
     return null;
   }
 
@@ -58,24 +91,45 @@ function normalizeVerifierRecord(record) {
   const scheme = String(source.password_scheme || source.scheme || PASSWORD_SCHEME).trim().toLowerCase();
   const salt = String(source.password_salt || source.salt || "").trim();
   const iterations = normalizeIterations(source.password_iterations || source.iterations);
-  const storedKey = String(
-    source.password_stored_key || source.stored_key || source.storedKey || ""
-  ).trim();
-  const serverKey = String(
-    source.password_server_key || source.server_key || source.serverKey || ""
-  ).trim();
+  const storage = String(source.storage || "").trim().toLowerCase();
+  const ciphertext = String(source.ciphertext || "").trim();
+  const iv = String(source.iv || "").trim();
+  const tag = String(source.tag || "").trim();
 
-  if (
-    scheme !== PASSWORD_SCHEME ||
-    !salt ||
-    !iterations ||
-    !storedKey ||
-    !serverKey
-  ) {
+  if (scheme !== PASSWORD_SCHEME || !salt || !iterations) {
+    return null;
+  }
+
+  if (storage === PASSWORD_RECORD_STORAGE && ciphertext && iv && tag) {
+    return {
+      ciphertext,
+      format: "sealed",
+      iterations,
+      iv,
+      salt,
+      scheme,
+      storage,
+      tag
+    };
+  }
+
+  if (!options.allowLegacy) {
+    return null;
+  }
+
+  const storedKey = normalizeKeyText(
+    source.password_stored_key || source.stored_key || source.storedKey || ""
+  );
+  const serverKey = normalizeKeyText(
+    source.password_server_key || source.server_key || source.serverKey || ""
+  );
+
+  if (!storedKey || !serverKey) {
     return null;
   }
 
   return {
+    format: "legacy",
     iterations,
     salt,
     scheme,
@@ -84,11 +138,50 @@ function normalizeVerifierRecord(record) {
   };
 }
 
+function getPasswordSealKey(authKeys) {
+  const key = authKeys?.passwordSealKey;
+
+  if (!Buffer.isBuffer(key) || key.length !== PASSWORD_KEY_LENGTH) {
+    throw new Error("Password seal key is unavailable.");
+  }
+
+  return key;
+}
+
 function deriveSaltedPassword(password, salt, iterations) {
   return pbkdf2Sync(String(password || ""), decodeBase64Url(salt), iterations, PASSWORD_KEY_LENGTH, PASSWORD_HASH);
 }
 
-function createPasswordVerifier(password, options = {}) {
+function sealPasswordVerifierRecord(record, authKeys) {
+  const normalizedStoredKey = normalizeKeyText(record.storedKey);
+  const normalizedServerKey = normalizeKeyText(record.serverKey);
+  const iv = randomBytes(PASSWORD_SEAL_IV_LENGTH);
+
+  if (!normalizedStoredKey || !normalizedServerKey) {
+    throw new Error("Password verifier fields are invalid.");
+  }
+
+  const cipher = createCipheriv(PASSWORD_SEAL_ALGORITHM, getPasswordSealKey(authKeys), iv);
+  cipher.setAAD(buildPasswordRecordAad(record));
+
+  const payload = JSON.stringify({
+    server_key: normalizedServerKey,
+    stored_key: normalizedStoredKey
+  });
+  const ciphertext = Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]);
+
+  return {
+    ciphertext: encodeBase64Url(ciphertext),
+    iterations: String(record.iterations),
+    iv: encodeBase64Url(iv),
+    salt: record.salt,
+    scheme: record.scheme,
+    storage: PASSWORD_RECORD_STORAGE,
+    tag: encodeBase64Url(cipher.getAuthTag())
+  };
+}
+
+function createPasswordVerifier(password, authKeys, options = {}) {
   const iterations = normalizeIterations(options.iterations) || PASSWORD_ITERATIONS;
   const salt = options.salt ? String(options.salt) : encodeBase64Url(randomBytes(16));
   const saltedPassword = deriveSaltedPassword(password, salt, iterations);
@@ -96,13 +189,108 @@ function createPasswordVerifier(password, options = {}) {
   const storedKey = sha256(clientKey);
   const serverKey = hmacSha256(saltedPassword, SERVER_KEY_LABEL);
 
+  return sealPasswordVerifierRecord(
+    {
+      iterations,
+      salt,
+      scheme: PASSWORD_SCHEME,
+      serverKey: encodeBase64Url(serverKey),
+      storedKey: encodeBase64Url(storedKey)
+    },
+    authKeys
+  );
+}
+
+function inspectPasswordRecord(record) {
+  const normalizedRecord = normalizeStoredPasswordRecord(record, {
+    allowLegacy: false
+  });
+
+  if (!normalizedRecord) {
+    return null;
+  }
+
   return {
-    iterations: String(iterations),
-    salt,
-    scheme: PASSWORD_SCHEME,
-    server_key: encodeBase64Url(serverKey),
-    stored_key: encodeBase64Url(storedKey)
+    format: normalizedRecord.format,
+    iterations: normalizedRecord.iterations,
+    salt: normalizedRecord.salt,
+    scheme: normalizedRecord.scheme,
+    storage: normalizedRecord.storage
   };
+}
+
+function openPasswordVerifierRecord(record, authKeys) {
+  const normalizedRecord = normalizeStoredPasswordRecord(record, {
+    allowLegacy: false
+  });
+
+  if (!normalizedRecord || normalizedRecord.format !== "sealed") {
+    return null;
+  }
+
+  let payload;
+
+  try {
+    const decipher = createDecipheriv(
+      PASSWORD_SEAL_ALGORITHM,
+      getPasswordSealKey(authKeys),
+      decodeBase64Url(normalizedRecord.iv)
+    );
+    decipher.setAAD(buildPasswordRecordAad(normalizedRecord));
+    decipher.setAuthTag(decodeBase64Url(normalizedRecord.tag));
+
+    payload = Buffer.concat([
+      decipher.update(decodeBase64Url(normalizedRecord.ciphertext)),
+      decipher.final()
+    ]).toString("utf8");
+  } catch {
+    return null;
+  }
+
+  let parsedPayload;
+
+  try {
+    parsedPayload = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+
+  const storedKey = normalizeKeyText(parsedPayload?.stored_key);
+  const serverKey = normalizeKeyText(parsedPayload?.server_key);
+
+  if (!storedKey || !serverKey) {
+    return null;
+  }
+
+  return {
+    iterations: normalizedRecord.iterations,
+    salt: normalizedRecord.salt,
+    scheme: normalizedRecord.scheme,
+    serverKey,
+    storedKey
+  };
+}
+
+function migratePasswordVerifierRecord(record, authKeys) {
+  const normalizedRecord = normalizeStoredPasswordRecord(record, {
+    allowLegacy: true
+  });
+
+  if (!normalizedRecord) {
+    return null;
+  }
+
+  if (normalizedRecord.format === "sealed") {
+    const openedRecord = openPasswordVerifierRecord(record, authKeys);
+
+    if (!openedRecord) {
+      return null;
+    }
+
+    return sealPasswordVerifierRecord(openedRecord, authKeys);
+  }
+
+  return sealPasswordVerifierRecord(normalizedRecord, authKeys);
 }
 
 function buildLoginAuthMessage({ challengeToken, clientNonce, serverNonce, username }) {
@@ -116,7 +304,17 @@ function buildLoginAuthMessage({ challengeToken, clientNonce, serverNonce, usern
 }
 
 function verifyLoginProof(options = {}) {
-  const verifier = normalizeVerifierRecord(options.verifier);
+  const verifier =
+    options.verifier &&
+    typeof options.verifier === "object" &&
+    !Array.isArray(options.verifier) &&
+    normalizeKeyText(options.verifier.storedKey) &&
+    normalizeKeyText(options.verifier.serverKey)
+      ? {
+          serverKey: normalizeKeyText(options.verifier.serverKey),
+          storedKey: normalizeKeyText(options.verifier.storedKey)
+        }
+      : null;
 
   if (!verifier) {
     return {
@@ -175,12 +373,15 @@ export {
   PASSWORD_HASH,
   PASSWORD_ITERATIONS,
   PASSWORD_KEY_LENGTH,
+  PASSWORD_RECORD_STORAGE,
   PASSWORD_SCHEME,
   SERVER_KEY_LABEL,
   buildLoginAuthMessage,
   createPasswordVerifier,
   decodeBase64Url,
   encodeBase64Url,
-  normalizeVerifierRecord,
+  inspectPasswordRecord,
+  migratePasswordVerifierRecord,
+  openPasswordVerifierRecord,
   verifyLoginProof
 };

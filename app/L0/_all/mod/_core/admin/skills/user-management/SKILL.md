@@ -9,8 +9,8 @@ Use this skill when the user asks to create a user, remove a user, change a user
 
 - `L2/<username>/` is the user's root folder. If this folder is deleted, the local account data and user customware are removed.
 - `L2/<username>/user.yaml` stores user metadata. `full_name` belongs here.
-- `L2/<username>/meta/password.json` stores the SCRAM password verifier used by login.
-- `L2/<username>/meta/logins.json` stores active session codes. Writing `{}` here revokes current sessions.
+- `L2/<username>/meta/password.json` stores the backend-sealed SCRAM verifier used by login.
+- `L2/<username>/meta/logins.json` stores signed session verifiers. Writing `{}` here revokes current sessions.
 - `L2/<username>/mod/` is the optional user customware root.
 
 There is no separate user registry file. The watched user index is derived from the files under `L2/<username>/`.
@@ -19,8 +19,9 @@ There is no separate user registry file. The watched user index is derived from 
 
 - Create directories by writing a path that ends with `/`, for example `await space.api.fileWrite("L2/alice/")` or `await space.api.fileWrite("L2/alice/mod/")`.
 - Delete files or directories with `await space.api.fileDelete(path)`. Directory deletes are recursive.
-- Use `await space.api.call("password_generate", { method: "POST", body: { password } })` to create a fresh password verifier before writing `meta/password.json`.
-- Use `space.utils.yaml.parse()` and `space.utils.yaml.serialize()` when editing `user.yaml` or `group.yaml`.
+- Use `await space.api.call("password_generate", { method: "POST", body: { password } })` to create a fresh sealed password record before writing `meta/password.json`.
+- Do not hand-roll `meta/password.json` or individual session entries. The backend secret must sign or seal them.
+- Use `space.utils.yaml.parse()` and `space.utils.yaml.stringify()` when editing `user.yaml` or `group.yaml`.
 
 ## Common Operations
 
@@ -47,7 +48,7 @@ return await space.api.fileWrite({
     { path: `L2/${username}/mod/` },
     {
       path: `L2/${username}/user.yaml`,
-      content: space.utils.yaml.serialize({ full_name: fullName })
+      content: space.utils.yaml.stringify({ full_name: fullName })
     },
     {
       path: `L2/${username}/meta/password.json`,
@@ -70,12 +71,12 @@ const path = "L2/alice/user.yaml";
 const current = await space.api.fileRead(path);
 const config = space.utils.yaml.parse(current.content || "");
 config.full_name = "Alice Example";
-return await space.api.fileWrite(path, space.utils.yaml.serialize(config));
+return await space.api.fileWrite(path, space.utils.yaml.stringify(config));
 ```
 
 ### Reset password
 
-Write a new verifier to `L2/<username>/meta/password.json`.
+Write a new sealed verifier record to `L2/<username>/meta/password.json`.
 
 ```js
 const username = "alice";
@@ -90,7 +91,7 @@ return await space.api.fileWrite(
 );
 ```
 
-If the user also wants to sign the user out everywhere, overwrite `L2/<username>/meta/logins.json` with `{}` in the same batch write.
+If the user also wants to sign the user out everywhere, overwrite `L2/<username>/meta/logins.json` with `{}` in the same batch write. Do not attempt to write individual session entries yourself.
 
 ### Remove a user
 

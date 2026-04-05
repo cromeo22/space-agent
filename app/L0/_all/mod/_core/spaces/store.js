@@ -6,7 +6,9 @@ import {
   WIDGET_API_VERSION
 } from "/mod/_core/spaces/constants.js";
 import {
+  buildCenteredFirstFitLayout,
   clampWidgetPosition,
+  findFirstFitWidgetPlacement,
   getRenderedWidgetSize,
   normalizeWidgetPosition,
   resolveSpaceLayout
@@ -14,15 +16,17 @@ import {
 import {
   buildSpaceRootPath,
   buildSpaceWidgetFilePath,
-  buildSpaceWidgetModuleUrl,
   createSpace,
   createWidgetSource,
   listSpaces,
-  maybeMigrateLegacyWidgetSource,
+  normalizeRendererSource,
   normalizeSpaceId,
+  normalizeWidgetId,
+  previewWidgetRecord,
   readSpace,
   removeSpace,
   removeWidget,
+  removeWidgets as removeWidgetsFromStorage,
   resolveAppUrl,
   saveSpaceLayout,
   saveSpaceMeta,
@@ -31,21 +35,8 @@ import {
 import {
   DEFAULT_WIDGET_SIZE,
   defineWidget,
-  fragment,
-  group,
-  html,
-  keyValue,
-  list,
-  markdown,
-  metric,
   normalizeWidgetSize,
-  notice,
-  primitives,
-  rawHtml,
   sizeToToken,
-  stack,
-  table,
-  text
 } from "/mod/_core/spaces/widget-sdk-core.js";
 import { renderWidgetOutput } from "/mod/_core/spaces/widget-render.js";
 
@@ -84,6 +75,183 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function normalizeRenderWidgetRequest(optionsOrId, cols, rows, renderer) {
+  if (optionsOrId && typeof optionsOrId === "object" && !Array.isArray(optionsOrId)) {
+    return { ...optionsOrId };
+  }
+
+  return {
+    cols,
+    id: optionsOrId,
+    rows,
+    renderer
+  };
+}
+
+function normalizeRuntimeWidgetIdList(values) {
+  const rawValues = Array.isArray(values) ? values : typeof values === "string" && values ? [values] : [];
+  return [...new Set(rawValues.map((value) => String(value ?? "").trim()).filter(Boolean).map((value) => normalizeWidgetId(value)))];
+}
+
+function hasExplicitWidgetPosition(options = {}) {
+  return (
+    options.position !== undefined ||
+    options.col !== undefined ||
+    options.row !== undefined
+  );
+}
+
+function mergeWidgetOrder(prioritizedWidgetIds, existingWidgetIds) {
+  const merged = [];
+  const seen = new Set();
+
+  [...prioritizedWidgetIds, ...existingWidgetIds].forEach((widgetId) => {
+    if (!widgetId || seen.has(widgetId)) {
+      return;
+    }
+
+    seen.add(widgetId);
+    merged.push(widgetId);
+  });
+
+  return merged;
+}
+
+function normalizeWidgetLayoutEntries(entries) {
+  const normalizedEntries = [];
+  const entryMap = new Map();
+
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return;
+    }
+
+    const rawWidgetId = String(entry.widgetId ?? entry.id ?? "").trim();
+
+    if (!rawWidgetId) {
+      return;
+    }
+
+    const widgetId = normalizeWidgetId(rawWidgetId);
+    const positionSource = entry.position && typeof entry.position === "object" && !Array.isArray(entry.position) ? entry.position : entry;
+    const sizeSource = entry.size && typeof entry.size === "object" && !Array.isArray(entry.size) ? entry.size : entry;
+    const normalizedEntry = {
+      id: widgetId
+    };
+
+    if (positionSource.col !== undefined || positionSource.row !== undefined) {
+      normalizedEntry.position = normalizeWidgetPosition(
+        {
+          col: positionSource.col,
+          row: positionSource.row
+        },
+        DEFAULT_WIDGET_POSITION
+      );
+    }
+
+    if (sizeSource.cols !== undefined || sizeSource.rows !== undefined) {
+      normalizedEntry.size = normalizeWidgetSize(
+        {
+          cols: sizeSource.cols,
+          rows: sizeSource.rows
+        },
+        DEFAULT_WIDGET_SIZE
+      );
+    }
+
+    if (entryMap.has(widgetId)) {
+      entryMap.delete(widgetId);
+    }
+
+    entryMap.set(widgetId, normalizedEntry);
+  });
+
+  entryMap.forEach((entry) => {
+    normalizedEntries.push(entry);
+  });
+
+  return normalizedEntries;
+}
+
+function assertSpaceOwnsWidgets(spaceRecord, widgetIds, actionLabel = "update widgets") {
+  const missingWidgetIds = widgetIds.filter((widgetId) => !spaceRecord?.widgetIds?.includes(widgetId));
+
+  if (!missingWidgetIds.length) {
+    return;
+  }
+
+  throw new Error(`Cannot ${actionLabel}: widget ids not found in space "${spaceRecord?.id || ""}": ${missingWidgetIds.join(", ")}.`);
+}
+
+async function rearrangePersistedSpaceWidgets(options = {}) {
+  const targetSpaceId = normalizeOptionalSpaceId(options.spaceId ?? options.id);
+
+  if (!targetSpaceId) {
+    throw new Error("A target spaceId is required to rearrange widgets.");
+  }
+
+  const currentSpace = await readSpace(targetSpaceId);
+  const widgetEntries = normalizeWidgetLayoutEntries(options.widgets ?? options.widgetLayouts);
+
+  if (!widgetEntries.length) {
+    return currentSpace;
+  }
+
+  const widgetIds = widgetEntries.map((entry) => entry.id);
+  assertSpaceOwnsWidgets(currentSpace, widgetIds, "rearrange widgets");
+
+  const widgetPositions = { ...currentSpace.widgetPositions };
+  const widgetSizes = { ...currentSpace.widgetSizes };
+  widgetEntries.forEach((entry) => {
+    if (entry.position) {
+      widgetPositions[entry.id] = entry.position;
+    }
+
+    if (entry.size) {
+      widgetSizes[entry.id] = entry.size;
+    }
+  });
+
+  return saveSpaceLayout({
+    id: targetSpaceId,
+    minimizedWidgetIds: currentSpace.minimizedWidgetIds,
+    widgetIds: mergeWidgetOrder(widgetIds, currentSpace.widgetIds),
+    widgetPositions,
+    widgetSizes
+  });
+}
+
+async function togglePersistedSpaceWidgets(options = {}) {
+  const targetSpaceId = normalizeOptionalSpaceId(options.spaceId ?? options.id);
+
+  if (!targetSpaceId) {
+    throw new Error("A target spaceId is required to toggle widgets.");
+  }
+
+  const currentSpace = await readSpace(targetSpaceId);
+  const widgetIds = normalizeRuntimeWidgetIdList(options.widgetIds ?? options.widgets);
+
+  if (!widgetIds.length) {
+    return currentSpace;
+  }
+
+  assertSpaceOwnsWidgets(currentSpace, widgetIds, "toggle widgets");
+  const nextMinimizedWidgetIds = new Set(currentSpace.minimizedWidgetIds);
+  widgetIds.forEach((widgetId) => {
+    if (nextMinimizedWidgetIds.has(widgetId)) {
+      nextMinimizedWidgetIds.delete(widgetId);
+      return;
+    }
+
+    nextMinimizedWidgetIds.add(widgetId);
+  });
+
+  return saveSpaceLayout({
+    id: targetSpaceId,
+    minimizedWidgetIds: [...nextMinimizedWidgetIds]
+  });
+}
+
 function ensureSpacesRuntimeNamespace() {
   const runtime = globalThis.space;
 
@@ -94,6 +262,8 @@ function ensureSpacesRuntimeNamespace() {
   const previousNamespace = runtime.spaces && typeof runtime.spaces === "object" ? runtime.spaces : {};
   const namespace = {
     ...previousNamespace,
+    all: Array.isArray(previousNamespace.all) ? [...previousNamespace.all] : [],
+    byId: previousNamespace.byId && typeof previousNamespace.byId === "object" ? { ...previousNamespace.byId } : {},
     createSpace: async (options = {}) => {
       const createdSpace = await createSpace(options);
 
@@ -110,19 +280,14 @@ function ensureSpacesRuntimeNamespace() {
       return createdSpace;
     },
     createWidgetSource,
+    current: previousNamespace.current || null,
+    currentId: String(previousNamespace.currentId || ""),
     defineWidget,
-    fragment,
     getCurrentSpace() {
-      return activeSpacesStore?.currentSpace || null;
+      return globalThis.space?.current || null;
     },
-    group,
-    html,
-    keyValue,
-    list,
+    items: Array.isArray(previousNamespace.items) ? [...previousNamespace.items] : [],
     listSpaces,
-    markdown,
-    metric,
-    notice,
     openSpace(spaceId, options = {}) {
       const normalizedSpaceId = normalizeOptionalSpaceId(spaceId);
 
@@ -138,15 +303,108 @@ function ensureSpacesRuntimeNamespace() {
         ? globalThis.space.router.replaceTo(SPACES_ROUTE_PATH, { params: { id: normalizedSpaceId } })
         : globalThis.space.router.goTo(SPACES_ROUTE_PATH, { params: { id: normalizedSpaceId } });
     },
-    primitives,
-    rawHtml,
     readSpace,
+    rearrangeWidgets: async (options = {}) => {
+      const targetSpaceId = options.spaceId || activeSpacesStore?.currentSpaceId;
+
+      if (!targetSpaceId) {
+        throw new Error("A target spaceId is required to rearrange widgets.");
+      }
+
+      const savedSpace = await rearrangePersistedSpaceWidgets({
+        ...options,
+        spaceId: targetSpaceId
+      });
+
+      if (activeSpacesStore) {
+        await activeSpacesStore.handleExternalMutation(targetSpaceId);
+      }
+
+      return savedSpace;
+    },
+    renderWidget: async (optionsOrId, cols, rows, renderer) => {
+      const request = normalizeRenderWidgetRequest(optionsOrId, cols, rows, renderer);
+      const targetSpaceId = request.spaceId || activeSpacesStore?.currentSpaceId;
+
+      if (!targetSpaceId) {
+        throw new Error("A target spaceId is required to render a widget.");
+      }
+
+      const result = await upsertWidget({
+        ...(await applyAutoWidgetPlacementToRequest(request, targetSpaceId)),
+        name: request.name ?? request.title,
+        spaceId: targetSpaceId,
+        widgetId: request.widgetId ?? request.id
+      });
+
+      if (activeSpacesStore) {
+        await activeSpacesStore.handleExternalMutation(targetSpaceId);
+      }
+
+      return result;
+    },
+    repairLayout: async (spaceIdOrOptions = undefined) => {
+      const requestedSpaceId =
+        typeof spaceIdOrOptions === "string"
+          ? spaceIdOrOptions
+          : spaceIdOrOptions && typeof spaceIdOrOptions === "object"
+            ? spaceIdOrOptions.spaceId ?? spaceIdOrOptions.id ?? activeSpacesStore?.currentSpaceId
+            : activeSpacesStore?.currentSpaceId;
+      const targetSpaceId = normalizeOptionalSpaceId(requestedSpaceId);
+
+      if (!targetSpaceId) {
+        throw new Error("A target spaceId is required to repair a layout.");
+      }
+
+      const currentSpace = await readSpace(targetSpaceId);
+      const savedSpace = await saveSpaceLayout({
+        id: targetSpaceId,
+        minimizedWidgetIds: currentSpace.minimizedWidgetIds,
+        widgetIds: currentSpace.widgetIds,
+        widgetPositions: currentSpace.widgetPositions,
+        widgetSizes: currentSpace.widgetSizes
+      });
+
+      if (activeSpacesStore) {
+        await activeSpacesStore.handleExternalMutation(targetSpaceId);
+      }
+
+      return savedSpace;
+    },
     reloadCurrentSpace: async () => {
       if (!activeSpacesStore) {
         throw new Error("The spaces view is not currently mounted.");
       }
 
       await activeSpacesStore.reloadCurrentSpace();
+      return activeSpacesStore.currentSpace;
+    },
+    reloadWidget: async (widgetIdOrOptions = {}) => {
+      if (!activeSpacesStore) {
+        throw new Error("The spaces view is not currently mounted.");
+      }
+
+      const requestedWidgetId =
+        typeof widgetIdOrOptions === "string"
+          ? widgetIdOrOptions
+          : widgetIdOrOptions && typeof widgetIdOrOptions === "object"
+            ? widgetIdOrOptions.widgetId ?? widgetIdOrOptions.id
+            : "";
+      const targetWidgetId = String(requestedWidgetId || "").trim() ? normalizeWidgetId(requestedWidgetId) : "";
+      const targetSpaceId =
+        typeof widgetIdOrOptions === "object" && widgetIdOrOptions && !Array.isArray(widgetIdOrOptions)
+          ? normalizeOptionalSpaceId(widgetIdOrOptions.spaceId ?? activeSpacesStore.currentSpaceId)
+          : activeSpacesStore.currentSpaceId;
+
+      if (!targetWidgetId) {
+        throw new Error("A widgetId is required to reload a widget.");
+      }
+
+      if (!targetSpaceId || targetSpaceId !== activeSpacesStore.currentSpaceId) {
+        throw new Error("Widget reload is only available for the currently open space.");
+      }
+
+      await activeSpacesStore.reloadWidget(targetWidgetId);
       return activeSpacesStore.currentSpace;
     },
     removeSpace: async (spaceIdOrOptions = undefined) => {
@@ -191,6 +449,55 @@ function ensureSpacesRuntimeNamespace() {
 
       return result;
     },
+    removeWidgets: async (options = {}) => {
+      const targetSpaceId = options.spaceId || activeSpacesStore?.currentSpaceId;
+
+      if (!targetSpaceId) {
+        throw new Error("A target spaceId is required to remove widgets.");
+      }
+
+      const result = await removeWidgetsFromStorage({
+        ...options,
+        spaceId: targetSpaceId
+      });
+
+      if (activeSpacesStore) {
+        await activeSpacesStore.handleExternalMutation(targetSpaceId);
+      }
+
+      return result;
+    },
+    removeAllWidgets: async (spaceIdOrOptions = undefined) => {
+      const requestedSpaceId =
+        typeof spaceIdOrOptions === "string"
+          ? spaceIdOrOptions
+          : spaceIdOrOptions && typeof spaceIdOrOptions === "object"
+            ? spaceIdOrOptions.spaceId ?? spaceIdOrOptions.id ?? activeSpacesStore?.currentSpaceId
+            : activeSpacesStore?.currentSpaceId;
+      const targetSpaceId = normalizeOptionalSpaceId(requestedSpaceId);
+
+      if (!targetSpaceId) {
+        throw new Error("A target spaceId is required to remove all widgets.");
+      }
+
+      const currentSpace = await readSpace(targetSpaceId);
+      const result =
+        currentSpace.widgetIds.length > 0
+          ? await removeWidgetsFromStorage({
+              spaceId: targetSpaceId,
+              widgetIds: currentSpace.widgetIds
+            })
+          : {
+              space: currentSpace,
+              widgetIds: []
+            };
+
+      if (activeSpacesStore) {
+        await activeSpacesStore.handleExternalMutation(targetSpaceId);
+      }
+
+      return result;
+    },
     resolveAppUrl,
     saveSpaceLayout: async (options = {}) => {
       const savedSpace = await saveSpaceLayout(options);
@@ -211,9 +518,24 @@ function ensureSpacesRuntimeNamespace() {
       return savedSpace;
     },
     sizeToToken,
-    stack,
-    table,
-    text,
+    toggleWidgets: async (options = {}) => {
+      const targetSpaceId = options.spaceId || activeSpacesStore?.currentSpaceId;
+
+      if (!targetSpaceId) {
+        throw new Error("A target spaceId is required to toggle widgets.");
+      }
+
+      const savedSpace = await togglePersistedSpaceWidgets({
+        ...options,
+        spaceId: targetSpaceId
+      });
+
+      if (activeSpacesStore) {
+        await activeSpacesStore.handleExternalMutation(targetSpaceId);
+      }
+
+      return savedSpace;
+    },
     upsertWidget: async (options = {}) => {
       const targetSpaceId = options.spaceId || activeSpacesStore?.currentSpaceId;
 
@@ -222,7 +544,7 @@ function ensureSpacesRuntimeNamespace() {
       }
 
       const result = await upsertWidget({
-        ...options,
+        ...(await applyAutoWidgetPlacementToRequest(options, targetSpaceId)),
         spaceId: targetSpaceId
       });
 
@@ -232,8 +554,7 @@ function ensureSpacesRuntimeNamespace() {
 
       return result;
     },
-    widgetApiVersion: WIDGET_API_VERSION,
-    widgetSdkUrl: "/mod/_core/spaces/widget-sdk.js"
+    widgetApiVersion: WIDGET_API_VERSION
   };
 
   runtime.spaces = namespace;
@@ -275,8 +596,265 @@ function normalizeOptionalSpaceId(value) {
   return rawValue ? normalizeSpaceId(rawValue) : "";
 }
 
+function formatTitleFromId(id) {
+  return String(id || "")
+    .split(/[-_]+/u)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
 function isTruthyRouteParam(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function getWidgetRecord(spaceRecord, widgetId) {
+  return spaceRecord?.widgets?.[widgetId] || null;
+}
+
+function getWidgetDefaultPosition(spaceRecord, widgetId) {
+  return normalizeWidgetPosition(getWidgetRecord(spaceRecord, widgetId)?.defaultPosition, DEFAULT_WIDGET_POSITION);
+}
+
+function getWidgetDefaultSize(spaceRecord, widgetId) {
+  return normalizeWidgetSize(getWidgetRecord(spaceRecord, widgetId)?.defaultSize, DEFAULT_WIDGET_SIZE);
+}
+
+function getEffectiveWidgetSize(spaceRecord, widgetId) {
+  return normalizeWidgetSize(spaceRecord?.widgetSizes?.[widgetId] || getWidgetDefaultSize(spaceRecord, widgetId), DEFAULT_WIDGET_SIZE);
+}
+
+function buildResolvedLayoutInputs(spaceRecord, overrides = {}) {
+  const widgetIds = (Array.isArray(overrides.widgetIds) ? overrides.widgetIds : spaceRecord?.widgetIds || []).filter((widgetId) =>
+    Boolean(getWidgetRecord(spaceRecord, widgetId))
+  );
+  const widgetPositions = {};
+  const widgetSizes = {};
+
+  widgetIds.forEach((widgetId) => {
+    widgetPositions[widgetId] = normalizeWidgetPosition(
+      overrides.widgetPositions?.[widgetId] ?? spaceRecord?.widgetPositions?.[widgetId] ?? getWidgetDefaultPosition(spaceRecord, widgetId),
+      getWidgetDefaultPosition(spaceRecord, widgetId)
+    );
+    widgetSizes[widgetId] = normalizeWidgetSize(
+      overrides.widgetSizes?.[widgetId] ?? spaceRecord?.widgetSizes?.[widgetId] ?? getWidgetDefaultSize(spaceRecord, widgetId),
+      getWidgetDefaultSize(spaceRecord, widgetId)
+    );
+  });
+
+  return {
+    minimizedWidgetIds:
+      overrides.minimizedWidgetIds ??
+      (Array.isArray(spaceRecord?.minimizedWidgetIds) ? [...spaceRecord.minimizedWidgetIds] : []),
+    widgetIds,
+    widgetPositions,
+    widgetSizes
+  };
+}
+
+function buildRuntimeWidgetDescriptor(spaceRecord, resolvedLayout, widgetId) {
+  const widgetRecord = getWidgetRecord(spaceRecord, widgetId);
+
+  if (!widgetRecord) {
+    return null;
+  }
+
+  const effectiveSize = getEffectiveWidgetSize(spaceRecord, widgetId);
+  const position = normalizeWidgetPosition(
+    resolvedLayout?.positions?.[widgetId] ?? getWidgetDefaultPosition(spaceRecord, widgetId),
+    getWidgetDefaultPosition(spaceRecord, widgetId)
+  );
+  const renderedSize = normalizeWidgetSize(
+    resolvedLayout?.renderedSizes?.[widgetId] ?? effectiveSize,
+    effectiveSize
+  );
+  const minimized = Boolean(resolvedLayout?.minimizedMap?.[widgetId] ?? spaceRecord?.minimizedWidgetIds?.includes(widgetId));
+
+  return {
+    col: position.col,
+    cols: renderedSize.cols,
+    id: widgetId,
+    minimized,
+    name: widgetRecord.name || formatTitleFromId(widgetId),
+    path: buildSpaceWidgetFilePath(spaceRecord.id, widgetId),
+    position,
+    renderer: widgetRecord.rendererSource,
+    renderedSize,
+    row: position.row,
+    rows: renderedSize.rows,
+    size: effectiveSize,
+    state: minimized ? "minimized" : "expanded"
+  };
+}
+
+async function applyAutoWidgetPlacementToRequest(request = {}, targetSpaceId = "") {
+  if (!targetSpaceId || hasExplicitWidgetPosition(request)) {
+    return request;
+  }
+
+  const widgetPreview = previewWidgetRecord({
+    ...request,
+    name: request.name ?? request.title,
+    widgetId: request.widgetId ?? request.id
+  });
+  const viewportCols = resolveViewportCols();
+  let targetSpace = null;
+  let resolvedLayout = null;
+
+  if (activeSpacesStore?.currentSpaceId === targetSpaceId && activeSpacesStore.currentSpace) {
+    targetSpace = activeSpacesStore.currentSpace;
+    resolvedLayout = activeSpacesStore.currentResolvedLayout || activeSpacesStore.resolveCurrentSpaceLayout(targetSpace);
+  } else {
+    targetSpace = await readSpace(targetSpaceId);
+    resolvedLayout = resolveSpaceLayout(buildResolvedLayoutInputs(targetSpace));
+  }
+
+  if (!targetSpace || targetSpace.widgetIds.includes(widgetPreview.id)) {
+    return request;
+  }
+
+  const suggestedPosition = findFirstFitWidgetPlacement({
+    existingWidgetPositions: resolvedLayout?.positions || {},
+    existingWidgetSizes: resolvedLayout?.renderedSizes || {},
+    viewportCols,
+    widgetSize: widgetPreview.defaultSize
+  });
+
+  return {
+    ...request,
+    col: suggestedPosition.col,
+    position: suggestedPosition,
+    row: suggestedPosition.row
+  };
+}
+
+function createCurrentSpaceRuntime(namespace) {
+  const currentSpace = activeSpacesStore?.currentSpace;
+
+  if (!currentSpace) {
+    return null;
+  }
+
+  return {
+    get byId() {
+      return Object.fromEntries(this.widgets.map((widget) => [widget.id, widget]));
+    },
+    get id() {
+      return activeSpacesStore?.currentSpace?.id || "";
+    },
+    get path() {
+      return activeSpacesStore?.currentSpace ? buildSpaceRootPath(activeSpacesStore.currentSpace.id) : "";
+    },
+    get title() {
+      return activeSpacesStore?.currentSpace?.title || "";
+    },
+    get updatedAt() {
+      return activeSpacesStore?.currentSpace?.updatedAt || "";
+    },
+    get widgets() {
+      const nextSpace = activeSpacesStore?.currentSpace;
+      const resolvedLayout = activeSpacesStore?.currentResolvedLayout;
+
+      if (!nextSpace) {
+        return [];
+      }
+
+      return nextSpace.widgetIds
+        .map((widgetId) => buildRuntimeWidgetDescriptor(nextSpace, resolvedLayout, widgetId))
+        .filter(Boolean);
+    },
+    reload() {
+      return namespace.reloadCurrentSpace();
+    },
+    reloadWidget(widgetId) {
+      return namespace.reloadWidget({
+        spaceId: activeSpacesStore?.currentSpaceId,
+        widgetId
+      });
+    },
+    removeWidget(widgetId) {
+      return namespace.removeWidget({
+        spaceId: activeSpacesStore?.currentSpaceId,
+        widgetId
+      });
+    },
+    removeWidgets(widgetIds) {
+      return namespace.removeWidgets({
+        spaceId: activeSpacesStore?.currentSpaceId,
+        widgetIds
+      });
+    },
+    removeAllWidgets() {
+      return namespace.removeAllWidgets({
+        spaceId: activeSpacesStore?.currentSpaceId
+      });
+    },
+    renderWidget(optionsOrId, cols, rows, renderer) {
+      return namespace.renderWidget({
+        ...normalizeRenderWidgetRequest(optionsOrId, cols, rows, renderer),
+        spaceId: activeSpacesStore?.currentSpaceId
+      });
+    },
+    rearrangeWidgets(widgets) {
+      return namespace.rearrangeWidgets({
+        spaceId: activeSpacesStore?.currentSpaceId,
+        widgets
+      });
+    },
+    repairLayout() {
+      return namespace.repairLayout({
+        spaceId: activeSpacesStore?.currentSpaceId
+      });
+    },
+    rearrange() {
+      if (!activeSpacesStore) {
+        throw new Error("The spaces view is not currently mounted.");
+      }
+
+      return activeSpacesStore.rearrangeCurrentSpace();
+    },
+    saveLayout(options = {}) {
+      return namespace.saveSpaceLayout({
+        ...options,
+        id: activeSpacesStore?.currentSpaceId
+      });
+    },
+    saveMeta(options = {}) {
+      return namespace.saveSpaceMeta({
+        ...options,
+        id: activeSpacesStore?.currentSpaceId
+      });
+    },
+    toggleWidgets(widgetIds) {
+      return namespace.toggleWidgets({
+        spaceId: activeSpacesStore?.currentSpaceId,
+        widgetIds
+      });
+    }
+  };
+}
+
+function syncSpacesRuntimeState() {
+  const runtime = globalThis.space;
+
+  if (!runtime?.spaces) {
+    return;
+  }
+
+  const items = Array.isArray(activeSpacesStore?.spaceList)
+    ? activeSpacesStore.spaceList.map((entry) => ({ ...entry }))
+    : Array.isArray(runtime.spaces.items)
+      ? runtime.spaces.items.map((entry) => ({ ...entry }))
+      : [];
+  const byId = Object.fromEntries(items.map((entry) => [entry.id, { ...entry }]));
+  const current = createCurrentSpaceRuntime(runtime.spaces);
+
+  runtime.spaces.items = items;
+  runtime.spaces.all = items;
+  runtime.spaces.byId = byId;
+  runtime.spaces.current = current;
+  runtime.spaces.currentId = current?.id || "";
+  runtime.current = current;
 }
 
 function createWidgetPlaceholder(textValue) {
@@ -432,6 +1010,28 @@ function startFloatingTitleAnimation(element, motionQuery = null) {
   };
 }
 
+function playGridFadeIn(gridElement, motionQuery = null) {
+  if (!gridElement || motionQuery?.matches) {
+    return () => {};
+  }
+
+  const cleanup = () => {
+    gridElement.classList.remove("is-render-fading");
+    gridElement.removeEventListener("animationend", cleanup);
+  };
+
+  gridElement.removeEventListener("animationend", cleanup);
+  gridElement.classList.remove("is-render-fading");
+  void gridElement.offsetWidth;
+  gridElement.classList.add("is-render-fading");
+  gridElement.addEventListener("animationend", cleanup, { once: true });
+
+  return () => {
+    gridElement.classList.remove("is-render-fading");
+    gridElement.removeEventListener("animationend", cleanup);
+  };
+}
+
 function applyWidgetCardSize(cardElement, size) {
   cardElement.style.setProperty("--spaces-widget-cols", String(size.cols));
   cardElement.style.setProperty("--spaces-widget-rows", String(size.rows));
@@ -508,6 +1108,126 @@ function resolveCssLength(value, contextElement, fallback = 0) {
   return Number.isFinite(width) && width > 0 ? width : fallback;
 }
 
+function resolveElementLineHeight(element) {
+  const contextElement = element instanceof Element ? element : document.documentElement;
+  const computedStyle = window.getComputedStyle(contextElement);
+  const explicitLineHeight = parsePixelValue(computedStyle.lineHeight, 0);
+
+  if (explicitLineHeight > 0) {
+    return explicitLineHeight;
+  }
+
+  const probe = document.createElement("span");
+  probe.textContent = "A\nB";
+  probe.style.position = "absolute";
+  probe.style.visibility = "hidden";
+  probe.style.pointerEvents = "none";
+  probe.style.whiteSpace = "pre";
+  probe.style.margin = "0";
+  probe.style.padding = "0";
+  probe.style.border = "0";
+  probe.style.font = computedStyle.font;
+  probe.style.lineHeight = computedStyle.lineHeight;
+  contextElement.appendChild(probe);
+  const measuredLineHeight = probe.getBoundingClientRect().height / 2;
+  probe.remove();
+
+  return measuredLineHeight > 0 ? measuredLineHeight : parsePixelValue(computedStyle.fontSize, 16);
+}
+
+function resolveWheelDeltaPixels(event, contextElement, viewportElement) {
+  const viewportWidth = Math.max(1, viewportElement?.clientWidth || window.innerWidth || 1);
+  const viewportHeight = Math.max(1, viewportElement?.clientHeight || window.innerHeight || 1);
+
+  if (event.deltaMode === 1) {
+    const lineHeight = resolveElementLineHeight(contextElement);
+    return {
+      x: event.deltaX * lineHeight,
+      y: event.deltaY * lineHeight
+    };
+  }
+
+  if (event.deltaMode === 2) {
+    return {
+      x: event.deltaX * viewportWidth,
+      y: event.deltaY * viewportHeight
+    };
+  }
+
+  return {
+    x: event.deltaX,
+    y: event.deltaY
+  };
+}
+
+function getPrimaryWheelAxis(deltaX, deltaY) {
+  if (Math.abs(deltaX) > Math.abs(deltaY)) {
+    return "x";
+  }
+
+  return "y";
+}
+
+function canElementScrollInDirection(element, axis, delta) {
+  if (!(element instanceof HTMLElement) || Math.abs(delta) < 0.01) {
+    return false;
+  }
+
+  const computedStyle = window.getComputedStyle(element);
+  const overflowValue = axis === "x" ? computedStyle.overflowX : computedStyle.overflowY;
+
+  if (!/(auto|scroll|overlay)/u.test(overflowValue)) {
+    return false;
+  }
+
+  if (axis === "x") {
+    const maxScrollLeft = element.scrollWidth - element.clientWidth;
+
+    if (maxScrollLeft <= 1) {
+      return false;
+    }
+
+    return delta < 0
+      ? element.scrollLeft > 0
+      : element.scrollLeft < (maxScrollLeft - 1);
+  }
+
+  const maxScrollTop = element.scrollHeight - element.clientHeight;
+
+  if (maxScrollTop <= 1) {
+    return false;
+  }
+
+  return delta < 0
+    ? element.scrollTop > 0
+    : element.scrollTop < (maxScrollTop - 1);
+}
+
+function shouldAllowNativeWheelScroll(target, boundaryElement, deltaX, deltaY) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  const primaryAxis = getPrimaryWheelAxis(deltaX, deltaY);
+  const secondaryAxis = primaryAxis === "x" ? "y" : "x";
+  const primaryDelta = primaryAxis === "x" ? deltaX : deltaY;
+  const secondaryDelta = secondaryAxis === "x" ? deltaX : deltaY;
+  let element = target;
+
+  while (element && element !== boundaryElement) {
+    if (
+      canElementScrollInDirection(element, primaryAxis, primaryDelta) ||
+      canElementScrollInDirection(element, secondaryAxis, secondaryDelta)
+    ) {
+      return true;
+    }
+
+    element = element.parentElement;
+  }
+
+  return false;
+}
+
 function readGridMetrics(gridElement) {
   const computedStyle = window.getComputedStyle(gridElement);
   const columnGap = resolveCssLength(computedStyle.getPropertyValue("--spaces-grid-gap"), gridElement, 16);
@@ -536,6 +1256,18 @@ function readGridMetrics(gridElement) {
     viewportHeight,
     viewportWidth
   };
+}
+
+function resolveViewportCols(gridElement = activeSpacesStore?.refs?.grid) {
+  if (gridElement) {
+    const metrics = readGridMetrics(gridElement);
+
+    if (metrics.colStep > 0) {
+      return Math.max(1, Math.floor(metrics.viewportWidth / metrics.colStep));
+    }
+  }
+
+  return Math.max(1, Math.floor((window.innerWidth || 1) / 90));
 }
 
 function resolveCanvasBounds(resolvedLayout, metrics) {
@@ -677,16 +1409,45 @@ function captureWidgetCardRects(widgetCards) {
   return rects;
 }
 
-function animateWidgetCardsFromRects(widgetCards, previousRects, motionQuery = null) {
-  if (!previousRects || motionQuery?.matches) {
+function animateWidgetCardsFromRects(widgetCards, previousRects, motionQuery = null, options = {}) {
+  const animateEntering = Boolean(options.animateEntering);
+
+  if ((!previousRects && !animateEntering) || motionQuery?.matches) {
     return;
   }
 
   Object.entries(widgetCards || {}).forEach(([widgetId, skeleton]) => {
-    const previousRect = previousRects[widgetId];
+    const previousRect = previousRects?.[widgetId];
     const cardElement = skeleton?.card;
 
-    if (!previousRect || !cardElement?.isConnected) {
+    if (!cardElement?.isConnected) {
+      return;
+    }
+
+    if (!previousRect) {
+      if (!animateEntering) {
+        cardElement.style.removeProperty("transition");
+        cardElement.style.removeProperty("transform");
+        cardElement.style.removeProperty("opacity");
+        return;
+      }
+
+      cardElement.style.transition = "none";
+      cardElement.style.transformOrigin = "center center";
+      cardElement.style.opacity = "0";
+      cardElement.style.transform = "translateY(10px) scale(0.96)";
+      void cardElement.offsetWidth;
+      cardElement.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease";
+      cardElement.style.opacity = "1";
+      cardElement.style.transform = "";
+
+      const cleanup = () => {
+        cardElement.style.removeProperty("transition");
+        cardElement.style.removeProperty("opacity");
+        cardElement.removeEventListener("transitionend", cleanup);
+      };
+
+      cardElement.addEventListener("transitionend", cleanup, { once: true });
       return;
     }
 
@@ -704,6 +1465,7 @@ function animateWidgetCardsFromRects(widgetCards, previousRects, motionQuery = n
     if (!hasMotion) {
       cardElement.style.removeProperty("transition");
       cardElement.style.removeProperty("transform");
+      cardElement.style.removeProperty("opacity");
       return;
     }
 
@@ -716,6 +1478,7 @@ function animateWidgetCardsFromRects(widgetCards, previousRects, motionQuery = n
 
     const cleanup = () => {
       cardElement.style.removeProperty("transition");
+      cardElement.style.removeProperty("opacity");
       cardElement.removeEventListener("transitionend", cleanup);
     };
 
@@ -761,6 +1524,10 @@ function toggleGridOverlay(gridElement, active, metrics = null, cameraOffset = {
   gridElement.style.setProperty("--spaces-grid-overlay-offset-y", `${offsetY}px`);
 }
 
+function shouldShowGridOverlay(layoutInteraction) {
+  return layoutInteraction?.type === "move" || layoutInteraction?.type === "resize";
+}
+
 function createWidgetActionButton(className, label, title) {
   const button = createElement("button", className, label);
   button.type = "button";
@@ -776,24 +1543,19 @@ function getSpaceCardClone(spaceRecord) {
     widgetIds: [...spaceRecord.widgetIds],
     widgetPositions: { ...spaceRecord.widgetPositions },
     widgetSizes: { ...spaceRecord.widgetSizes },
-    widgetTitles: { ...spaceRecord.widgetTitles }
+    widgets: Object.fromEntries(
+      Object.entries(spaceRecord.widgets || {}).map(([widgetId, widgetRecord]) => [widgetId, { ...widgetRecord }])
+    )
   };
 }
 
-function buildWidgetHeaderTitle(spaceRecord, widgetId, definition) {
-  return (
-    spaceRecord.widgetTitles[widgetId] ||
-    String(definition?.title || "").trim() ||
-    widgetId
-      .split(/[-_]+/u)
-      .filter(Boolean)
-      .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-      .join(" ")
-  );
+function buildWidgetHeaderTitle(spaceRecord, widgetId) {
+  return getWidgetRecord(spaceRecord, widgetId)?.name || formatTitleFromId(widgetId);
 }
 
-function createWidgetContext(spaceRecord, widgetId, definition, size, layoutEntry) {
+function createWidgetContext(spaceRecord, widgetId, size, layoutEntry) {
   const widgetPath = buildSpaceWidgetFilePath(spaceRecord.id, widgetId);
+  const widgetRecord = getWidgetRecord(spaceRecord, widgetId);
 
   return {
     api: globalThis.space.api,
@@ -812,7 +1574,6 @@ function createWidgetContext(spaceRecord, widgetId, definition, size, layoutEntr
       root: buildSpaceRootPath(spaceRecord.id),
       widget: widgetPath
     },
-    primitives,
     reloadSpace: spacesRuntime.reloadCurrentSpace,
     resolveAppUrl,
     router: globalThis.space.router,
@@ -823,13 +1584,17 @@ function createWidgetContext(spaceRecord, widgetId, definition, size, layoutEntr
       title: spaceRecord.title,
       updatedAt: spaceRecord.updatedAt
     },
+    spaces: globalThis.space.spaces,
     widget: {
+      defaultPosition: getWidgetDefaultPosition(spaceRecord, widgetId),
+      defaultSize: getWidgetDefaultSize(spaceRecord, widgetId),
       id: widgetId,
       minimized: Boolean(layoutEntry?.minimized),
+      name: widgetRecord?.name || formatTitleFromId(widgetId),
       path: widgetPath,
       position: normalizeWidgetPosition(layoutEntry?.position, DEFAULT_WIDGET_POSITION),
       size,
-      title: buildWidgetHeaderTitle(spaceRecord, widgetId, definition)
+      title: buildWidgetHeaderTitle(spaceRecord, widgetId)
     }
   };
 }
@@ -837,8 +1602,8 @@ function createWidgetContext(spaceRecord, widgetId, definition, size, layoutEntr
 function createWidgetCardSkeleton(spaceRecord, widgetId, layoutEntry) {
   const card = createElement("article", "space-card spaces-widget-card");
   const controls = createElement("div", "spaces-widget-card-controls");
+  const reloadButton = createWidgetActionButton("spaces-widget-control-button spaces-widget-reload-button", "", "Reload widget");
   const handle = createWidgetActionButton("spaces-widget-drag-handle", "", "Move widget");
-  const grip = createElement("span", "spaces-widget-drag-grip");
   const titleLabel = createElement("span", "spaces-widget-card-title", buildWidgetHeaderTitle(spaceRecord, widgetId));
   const actions = createElement("div", "spaces-widget-card-actions");
   const minimizeButton = createWidgetActionButton(
@@ -846,19 +1611,28 @@ function createWidgetCardSkeleton(spaceRecord, widgetId, layoutEntry) {
     layoutEntry?.minimized ? "+" : "-",
     layoutEntry?.minimized ? "Restore widget" : "Minimize widget"
   );
-  const closeButton = createWidgetActionButton("spaces-widget-control-button", "x", "Remove widget");
+  const closeButton = createWidgetActionButton("spaces-widget-control-button", "", "Remove widget");
   const body = createElement("div", "spaces-widget-card-body");
   const resizeHandle = createWidgetActionButton("spaces-widget-resize-handle", "", "Resize widget");
+  const reloadIcon = createElement("x-icon", "", "refresh");
+  const closeIcon = createElement("x-icon", "", "close");
 
-  handle.append(grip, titleLabel);
+  reloadButton.appendChild(reloadIcon);
+  closeButton.appendChild(closeIcon);
+  handle.append(titleLabel);
   card.dataset.widgetId = widgetId;
   body.appendChild(createWidgetPlaceholder("Loading widget..."));
-  controls.append(handle, actions);
+  controls.append(handle, reloadButton, actions);
   actions.append(minimizeButton, closeButton);
   card.append(controls, body, resizeHandle);
 
   handle.addEventListener("pointerdown", (event) => {
     activeSpacesStore?.beginWidgetMove(event, widgetId);
+  });
+  reloadButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void activeSpacesStore?.reloadWidget(widgetId);
   });
   resizeHandle.addEventListener("pointerdown", (event) => {
     activeSpacesStore?.beginWidgetResize(event, widgetId);
@@ -874,49 +1648,131 @@ function createWidgetCardSkeleton(spaceRecord, widgetId, layoutEntry) {
     void activeSpacesStore?.closeWidget(widgetId);
   });
 
-  return { body, card, minimizeButton, titleLabel };
+  return { body, card, cleanup: null, minimizeButton, reloadButton, titleLabel };
 }
 
-async function loadWidgetDefinition(moduleUrl) {
-  const module = await import(moduleUrl);
-  const candidate = module?.default ?? module?.widget ?? module;
-
-  if (!candidate || typeof candidate !== "object" || typeof candidate.render !== "function") {
-    throw new Error("Widget modules must export a widget definition with a render(ctx) function.");
+function runWidgetCleanup(skeleton) {
+  if (typeof skeleton?.cleanup !== "function") {
+    skeleton.cleanup = null;
+    return;
   }
 
-  return defineWidget(candidate);
+  try {
+    skeleton.cleanup();
+  } catch (error) {
+    logSpacesError("widget cleanup failed", error, {
+      widgetId: skeleton.card?.dataset?.widgetId
+    });
+  } finally {
+    skeleton.cleanup = null;
+  }
 }
 
-async function renderWidgetCard(spaceRecord, widgetId, skeleton, cacheToken, loadToken, layoutEntry) {
-  const migrationResult = await maybeMigrateLegacyWidgetSource(spaceRecord.id, widgetId);
-  const moduleUrl = buildSpaceWidgetModuleUrl(
-    spaceRecord.id,
-    widgetId,
-    migrationResult.migrated ? `${cacheToken}-${Date.now().toString(36)}` : cacheToken
-  );
-  const definition = await loadWidgetDefinition(moduleUrl);
-  const storedSize = spaceRecord.widgetSizes[widgetId] || normalizeWidgetSize(definition.size, DEFAULT_WIDGET_SIZE);
+function cleanupWidgetCards(widgetCards) {
+  Object.values(widgetCards || {}).forEach((skeleton) => {
+    runWidgetCleanup(skeleton);
+  });
+}
+
+function tryCompileRendererMethod(rendererSource) {
+  const methodObject = Function(`return ({ ${rendererSource} });`)();
+
+  if (typeof methodObject?.renderer === "function") {
+    return methodObject.renderer;
+  }
+
+  const functionValues = Object.values(methodObject || {}).filter((value) => typeof value === "function");
+
+  if (functionValues.length === 1) {
+    return functionValues[0];
+  }
+
+  return null;
+}
+
+function compileWidgetRenderer(widgetRecord, widgetId) {
+  const rendererSource = normalizeRendererSource(widgetRecord?.rendererSource || "");
+
+  if (!rendererSource) {
+    throw new Error(`Widget "${widgetId}" is missing a renderer function.`);
+  }
+
+  let compiledRenderer = null;
+
+  try {
+    compiledRenderer = Function(`return (${rendererSource});`)();
+  } catch (directCompileError) {
+    try {
+      compiledRenderer = tryCompileRendererMethod(rendererSource);
+    } catch {
+      throw directCompileError;
+    }
+
+    if (!compiledRenderer) {
+      throw directCompileError;
+    }
+  }
+
+  if (typeof compiledRenderer !== "function") {
+    throw new Error(`Widget "${widgetId}" renderer must evaluate to a function.`);
+  }
+
+  return compiledRenderer;
+}
+
+async function renderWidgetCard(spaceRecord, widgetId, skeleton, loadToken, layoutEntry) {
+  const widgetRecord = getWidgetRecord(spaceRecord, widgetId);
+
+  if (!widgetRecord) {
+    throw new Error(`Widget "${widgetId}" could not be found.`);
+  }
+
+  const storedSize = getEffectiveWidgetSize(spaceRecord, widgetId);
   const size = layoutEntry?.renderedSize || getRenderedWidgetSize(storedSize, Boolean(layoutEntry?.minimized));
-  const context = createWidgetContext(spaceRecord, widgetId, definition, size, layoutEntry);
+  const context = createWidgetContext(spaceRecord, widgetId, size, layoutEntry);
+  const renderer = compileWidgetRenderer(widgetRecord, widgetId);
 
   skeleton.card.classList.toggle("is-minimized", Boolean(layoutEntry?.minimized));
   skeleton.minimizeButton.textContent = layoutEntry?.minimized ? "+" : "-";
   skeleton.minimizeButton.title = layoutEntry?.minimized ? "Restore widget" : "Minimize widget";
   skeleton.minimizeButton.setAttribute("aria-label", skeleton.minimizeButton.title);
-  skeleton.titleLabel.textContent = buildWidgetHeaderTitle(spaceRecord, widgetId, definition);
+  skeleton.titleLabel.textContent = buildWidgetHeaderTitle(spaceRecord, widgetId);
+  runWidgetCleanup(skeleton);
+  skeleton.body.replaceChildren();
 
-  const loadedData = definition.load ? await definition.load(context) : undefined;
-  const rendered = await definition.render({
-    ...context,
-    data: loadedData
-  });
+  const rendered = await renderer(skeleton.body, globalThis.space, context);
 
   if (loadToken !== activeSpacesStore?.widgetLoadToken) {
+    if (typeof rendered === "function") {
+      rendered();
+      return;
+    }
+
+    if (rendered && typeof rendered === "object" && !Array.isArray(rendered) && typeof rendered.cleanup === "function") {
+      rendered.cleanup();
+    }
+
     return;
   }
 
-  renderWidgetOutput(rendered, skeleton.body);
+  if (typeof rendered === "function") {
+    skeleton.cleanup = rendered;
+    return;
+  }
+
+  if (rendered && typeof rendered === "object" && !Array.isArray(rendered) && typeof rendered.cleanup === "function") {
+    skeleton.cleanup = rendered.cleanup;
+
+    if (rendered.output !== undefined) {
+      renderWidgetOutput(rendered.output, skeleton.body);
+    }
+
+    return;
+  }
+
+  if (rendered !== undefined) {
+    renderWidgetOutput(rendered, skeleton.body);
+  }
 }
 
 const spacesModel = {
@@ -943,6 +1799,8 @@ const spacesModel = {
   noticeText: "",
   noticeTone: "info",
   canvasPointerDownHandler: null,
+  canvasWheelHandler: null,
+  renderFadeCleanup: null,
   refs: {},
   savingTitle: false,
   spaceList: [],
@@ -962,15 +1820,22 @@ const spacesModel = {
       this.handleCanvasPointerDown(event);
     };
     this.refs.canvas?.addEventListener("pointerdown", this.canvasPointerDownHandler);
+    this.canvasWheelHandler = (event) => {
+      this.handleCanvasWheel(event);
+    };
+    this.refs.canvas?.addEventListener("wheel", this.canvasWheelHandler, { passive: false });
     activeSpacesStore = this;
+    syncSpacesRuntimeState();
     void this.refreshFromRoute();
   },
 
   unmount() {
     this.cleanupEmptyCanvas();
+    this.cleanupRenderFade();
     this.cleanupLayoutInteraction({
       restoreLayout: false
     });
+    cleanupWidgetCards(this.widgetCards);
 
     if (activeSpacesStore === this) {
       activeSpacesStore = null;
@@ -998,8 +1863,15 @@ const spacesModel = {
       this.canvasPointerDownHandler = null;
     }
 
+    if (this.canvasWheelHandler && this.refs.canvas) {
+      this.refs.canvas.removeEventListener("wheel", this.canvasWheelHandler);
+      this.canvasWheelHandler = null;
+    }
+
     this.widgetCards = {};
     this.refs = {};
+    this.renderFadeCleanup = null;
+    syncSpacesRuntimeState();
   },
 
   get hasCurrentSpace() {
@@ -1042,6 +1914,14 @@ const spacesModel = {
     this.noticeTone = "info";
   },
 
+  cleanupRenderFade() {
+    if (typeof this.renderFadeCleanup === "function") {
+      this.renderFadeCleanup();
+    }
+
+    this.renderFadeCleanup = null;
+  },
+
   cleanupEmptyCanvas() {
     if (typeof this.emptyCanvasCleanup === "function") {
       this.emptyCanvasCleanup();
@@ -1055,15 +1935,22 @@ const spacesModel = {
       return null;
     }
 
+    const layoutInputs = buildResolvedLayoutInputs(spaceRecord, {
+      minimizedWidgetIds: overrides.minimizedWidgetIds,
+      widgetIds: overrides.widgetIds,
+      widgetPositions: overrides.widgetPositions,
+      widgetSizes: overrides.widgetSizes
+    });
+
     return resolveSpaceLayout({
       anchorMinimized: overrides.anchorMinimized,
       anchorPosition: overrides.anchorPosition,
       anchorSize: overrides.anchorSize,
       anchorWidgetId: overrides.anchorWidgetId,
-      minimizedWidgetIds: overrides.minimizedWidgetIds ?? spaceRecord.minimizedWidgetIds,
-      widgetIds: overrides.widgetIds ?? spaceRecord.widgetIds,
-      widgetPositions: overrides.widgetPositions ?? spaceRecord.widgetPositions,
-      widgetSizes: overrides.widgetSizes ?? spaceRecord.widgetSizes
+      minimizedWidgetIds: layoutInputs.minimizedWidgetIds,
+      widgetIds: layoutInputs.widgetIds,
+      widgetPositions: layoutInputs.widgetPositions,
+      widgetSizes: layoutInputs.widgetSizes
     });
   },
 
@@ -1110,7 +1997,7 @@ const spacesModel = {
         return;
       }
 
-      const renderedSize = resolvedLayout.renderedSizes[widgetId] || getRenderedWidgetSize(spaceRecord.widgetSizes[widgetId]);
+      const renderedSize = resolvedLayout.renderedSizes[widgetId] || getRenderedWidgetSize(getEffectiveWidgetSize(spaceRecord, widgetId));
       applyWidgetCardLayout(skeleton.card, resolvedLayout.positions[widgetId], renderedSize, null, metrics);
       skeleton.card.classList.toggle("is-minimized", Boolean(resolvedLayout.minimizedMap[widgetId]));
       skeleton.minimizeButton.textContent = resolvedLayout.minimizedMap[widgetId] ? "+" : "-";
@@ -1121,10 +2008,13 @@ const spacesModel = {
     });
 
     if (!options.skipAnimation) {
-      animateWidgetCardsFromRects(this.widgetCards, previousRects, this.motionQuery);
+      animateWidgetCardsFromRects(this.widgetCards, previousRects, this.motionQuery, {
+        animateEntering: options.animateEntering
+      });
     }
 
-    toggleGridOverlay(this.refs.grid, Boolean(this.layoutInteraction), metrics, this.cameraOffsetPx);
+    toggleGridOverlay(this.refs.grid, shouldShowGridOverlay(this.layoutInteraction), metrics, this.cameraOffsetPx);
+    syncSpacesRuntimeState();
   },
 
   cleanupLayoutInteraction(options = {}) {
@@ -1175,6 +2065,60 @@ const spacesModel = {
     this.beginCanvasPan(event);
   },
 
+  panCameraByPixels(deltaX, deltaY, options = {}) {
+    if (!this.currentResolvedLayout || !this.currentSpace || !this.refs.grid) {
+      return false;
+    }
+
+    if (Math.abs(deltaX) < 0.01 && Math.abs(deltaY) < 0.01) {
+      return false;
+    }
+
+    const metrics = readGridMetrics(this.refs.grid);
+    const nextCameraOffset = clampCameraOffsetToContent(
+      {
+        x: this.cameraOffsetPx.x + deltaX,
+        y: this.cameraOffsetPx.y + deltaY
+      },
+      this.currentResolvedLayout,
+      metrics
+    );
+    const changed =
+      Math.abs(nextCameraOffset.x - this.cameraOffsetPx.x) > 0.01 ||
+      Math.abs(nextCameraOffset.y - this.cameraOffsetPx.y) > 0.01;
+
+    this.cameraOffsetPx = nextCameraOffset;
+
+    if (changed || options.forceRender) {
+      this.applyResolvedLayoutToCards(this.currentResolvedLayout, this.currentSpace, {
+        skipAnimation: true
+      });
+    }
+
+    return changed;
+  },
+
+  handleCanvasWheel(event) {
+    if (!this.currentSpace?.widgetIds?.length || !this.refs.canvas || !this.refs.grid) {
+      return;
+    }
+
+    if (event.ctrlKey || this.layoutInteraction) {
+      return;
+    }
+
+    const delta = resolveWheelDeltaPixels(event, this.refs.canvas, this.refs.canvas);
+
+    if (shouldAllowNativeWheelScroll(event.target, this.refs.canvas, delta.x, delta.y)) {
+      return;
+    }
+
+    event.preventDefault();
+    this.panCameraByPixels(-delta.x, -delta.y, {
+      forceRender: true
+    });
+  },
+
   beginCanvasPan(event) {
     if (!this.refs.canvas || !this.refs.grid) {
       return;
@@ -1183,12 +2127,9 @@ const spacesModel = {
     event.preventDefault();
     this.cleanupLayoutInteraction();
 
-    const gridMetrics = readGridMetrics(this.refs.grid);
     this.refs.canvas.classList.add("is-panning");
-    toggleGridOverlay(this.refs.grid, true, gridMetrics, this.cameraOffsetPx);
 
     this.layoutInteraction = {
-      gridMetrics,
       pointerId: event.pointerId,
       startCameraOffset: { ...this.cameraOffsetPx },
       startX: event.clientX,
@@ -1235,19 +2176,7 @@ const spacesModel = {
     if (!deltaX && !deltaY) {
       return;
     }
-
-    const nextCameraOffset = {
-      x: this.cameraOffsetPx.x + deltaX,
-      y: this.cameraOffsetPx.y + deltaY
-    };
-    const metrics = readGridMetrics(this.refs.grid);
-    this.cameraOffsetPx = clampCameraOffsetToContent(nextCameraOffset, this.currentResolvedLayout, metrics);
-
-    if (this.currentResolvedLayout && this.currentSpace) {
-      this.applyResolvedLayoutToCards(this.currentResolvedLayout, this.currentSpace, {
-        skipAnimation: true
-      });
-    }
+    this.panCameraByPixels(deltaX, deltaY);
   },
 
   handleViewportResize() {
@@ -1319,7 +2248,7 @@ const spacesModel = {
 
     const resolvedLayout = this.currentResolvedLayout || this.resolveCurrentSpaceLayout();
     const layoutPosition = resolvedLayout?.positions?.[widgetId];
-    const storedSize = this.currentSpace.widgetSizes[widgetId] || DEFAULT_WIDGET_SIZE;
+    const storedSize = getEffectiveWidgetSize(this.currentSpace, widgetId);
 
     if (!layoutPosition || !storedSize) {
       return;
@@ -1377,18 +2306,10 @@ const spacesModel = {
     event.preventDefault();
 
     if (interaction.type === "pan") {
-      const nextCameraOffset = {
-        x: interaction.startCameraOffset.x + (event.clientX - interaction.startX),
-        y: interaction.startCameraOffset.y + (event.clientY - interaction.startY)
-      };
-      this.cameraOffsetPx = clampCameraOffsetToContent(nextCameraOffset, this.currentResolvedLayout, interaction.gridMetrics);
-
-      if (this.currentResolvedLayout && this.currentSpace) {
-        this.applyResolvedLayoutToCards(this.currentResolvedLayout, this.currentSpace, {
-          skipAnimation: true
-        });
-      }
-
+      this.panCameraByPixels(
+        (interaction.startCameraOffset.x + (event.clientX - interaction.startX)) - this.cameraOffsetPx.x,
+        (interaction.startCameraOffset.y + (event.clientY - interaction.startY)) - this.cameraOffsetPx.y
+      );
       return;
     }
 
@@ -1503,14 +2424,14 @@ const spacesModel = {
     if (changes.position !== undefined) {
       nextSpace.widgetPositions[widgetId] = normalizeWidgetPosition(
         changes.position,
-        nextSpace.widgetPositions[widgetId] || DEFAULT_WIDGET_POSITION
+        nextSpace.widgetPositions[widgetId] || getWidgetDefaultPosition(nextSpace, widgetId)
       );
     }
 
     if (changes.size !== undefined) {
       nextSpace.widgetSizes[widgetId] = normalizeWidgetSize(
         changes.size,
-        nextSpace.widgetSizes[widgetId] || DEFAULT_WIDGET_SIZE
+        nextSpace.widgetSizes[widgetId] || getEffectiveWidgetSize(nextSpace, widgetId)
       );
     }
 
@@ -1609,31 +2530,75 @@ const spacesModel = {
     }
   },
 
+  async reloadWidget(widgetId) {
+    if (!this.currentSpace || !this.refs.grid) {
+      return;
+    }
+
+    const skeleton = this.widgetCards[widgetId];
+    const widgetRecord = getWidgetRecord(this.currentSpace, widgetId);
+
+    if (!skeleton || !widgetRecord) {
+      throw new Error(`Widget "${widgetId}" was not found in the current space.`);
+    }
+
+    const resolvedLayout = this.currentResolvedLayout || this.resolveCurrentSpaceLayout(this.currentSpace);
+    const layoutEntry = {
+      minimized: Boolean(resolvedLayout?.minimizedMap?.[widgetId]),
+      position: resolvedLayout?.positions?.[widgetId],
+      renderedSize: resolvedLayout?.renderedSizes?.[widgetId]
+    };
+    const loadToken = this.widgetLoadToken;
+
+    skeleton.card.classList.remove("is-error");
+    skeleton.body.replaceChildren(createWidgetPlaceholder("Reloading widget..."));
+
+    try {
+      await renderWidgetCard(this.currentSpace, widgetId, skeleton, loadToken, layoutEntry);
+    } catch (error) {
+      if (loadToken !== this.widgetLoadToken) {
+        return;
+      }
+
+      logSpacesError("reloadWidget failed", error, {
+        spaceId: this.currentSpace.id,
+        widgetId
+      });
+      this.setNotice(formatErrorMessage(error, `Unable to reload widget "${widgetId}".`), "error");
+      skeleton.body.replaceChildren(
+        createWidgetPlaceholder(formatErrorMessage(error, `Unable to render widget "${widgetId}".`))
+      );
+      skeleton.card.classList.add("is-error");
+    }
+  },
+
   async consolidateCurrentSpace() {
+    return this.rearrangeCurrentSpace();
+  },
+
+  async rearrangeCurrentSpace() {
     if (!this.currentSpace?.widgetIds?.length) {
       return;
     }
 
     const previousRects = captureWidgetCardRects(this.widgetCards);
     const nextSpace = getSpaceCardClone(this.currentSpace);
-    const orderedEntries = nextSpace.widgetIds.map((widgetId) => ({
-      size: normalizeWidgetSize(nextSpace.widgetSizes[widgetId] || DEFAULT_WIDGET_SIZE, DEFAULT_WIDGET_SIZE),
-      widgetId
-    }));
-    const totalCols = orderedEntries.reduce((sum, entry) => sum + entry.size.cols, 0);
-    let cursor = -Math.floor(totalCols / 2);
-    const positions = {};
-
-    orderedEntries.forEach((entry) => {
-      positions[entry.widgetId] = {
-        col: cursor,
-        row: 0
-      };
-      cursor += entry.size.cols;
-    });
+    const viewportCols = resolveViewportCols(this.refs.grid);
+    const positions = buildCenteredFirstFitLayout({
+      viewportCols,
+      widgetIds: nextSpace.widgetIds,
+      widgetSizes: Object.fromEntries(
+        nextSpace.widgetIds.map((widgetId) => [
+          widgetId,
+          getRenderedWidgetSize(
+            getEffectiveWidgetSize(nextSpace, widgetId),
+            nextSpace.minimizedWidgetIds.includes(widgetId)
+          )
+        ])
+      )
+    }).positions;
 
     nextSpace.widgetPositions = positions;
-    nextSpace.minimizedWidgetIds = [];
     this.cameraOffsetPx = {
       x: 0,
       y: 0
@@ -1646,7 +2611,7 @@ const spacesModel = {
     });
 
     nextSpace.widgetPositions = { ...resolvedLayout.positions };
-    nextSpace.minimizedWidgetIds = [];
+    nextSpace.minimizedWidgetIds = nextSpace.widgetIds.filter((widgetId) => resolvedLayout.minimizedMap[widgetId]);
     this.currentSpace = nextSpace;
     this.applyResolvedLayoutToCards(resolvedLayout, nextSpace, {
       previousRects
@@ -1677,6 +2642,7 @@ const spacesModel = {
     try {
       this.spaceList = await listSpaces();
       this.loaded = true;
+      syncSpacesRuntimeState();
     } finally {
       this.loadingList = false;
     }
@@ -1707,12 +2673,14 @@ const spacesModel = {
       this.currentSpace = null;
       this.currentSpaceId = "";
       this.currentSpaceTitleDraft = "";
+      syncSpacesRuntimeState();
       this.renderGridState("No spaces yet.", "Create a space to start building persisted widgets.");
     } catch (error) {
       logSpacesError("refreshFromRoute failed", error);
       this.currentSpace = null;
       this.currentSpaceId = "";
       this.currentSpaceTitleDraft = "";
+      syncSpacesRuntimeState();
       this.renderGridState("Unable to load spaces.", formatErrorMessage(error, "Unknown spaces error."), "error");
       this.setNotice(formatErrorMessage(error, "Unable to load spaces."), "error");
     }
@@ -1776,6 +2744,8 @@ const spacesModel = {
     }
 
     this.cleanupEmptyCanvas();
+    this.cleanupRenderFade();
+    cleanupWidgetCards(this.widgetCards);
     this.cameraOffsetPx = {
       x: 0,
       y: 0
@@ -1787,12 +2757,14 @@ const spacesModel = {
     this.refs.grid.style.removeProperty("width");
     this.refs.grid.style.removeProperty("height");
     this.refs.grid.replaceChildren(createGridStateCard(titleValue, bodyValue, tone));
+    syncSpacesRuntimeState();
   },
 
   async loadCurrentSpace(spaceId) {
     this.loadingSpace = true;
     this.widgetLoadToken += 1;
     const loadToken = this.widgetLoadToken;
+    cleanupWidgetCards(this.widgetCards);
     this.currentSpaceId = spaceId;
     this.currentSpace = null;
     this.cameraOffsetPx = {
@@ -1817,6 +2789,7 @@ const spacesModel = {
       this.currentSpace = spaceRecord;
       this.currentSpaceId = spaceRecord.id;
       this.currentSpaceTitleDraft = spaceRecord.title;
+      syncSpacesRuntimeState();
       await this.renderCurrentSpace(spaceRecord, loadToken);
     } catch (error) {
       if (loadToken !== this.widgetLoadToken) {
@@ -1825,6 +2798,7 @@ const spacesModel = {
 
       this.currentSpace = null;
       this.currentSpaceTitleDraft = "";
+      syncSpacesRuntimeState();
       this.renderGridState(
         "Unable to open this space.",
         formatErrorMessage(error, "The requested space could not be loaded."),
@@ -1839,7 +2813,7 @@ const spacesModel = {
     }
   },
 
-  async renderCurrentSpace(spaceRecord, loadToken) {
+  async renderCurrentSpace(spaceRecord, loadToken, options = {}) {
     const grid = this.refs.grid;
 
     if (!grid) {
@@ -1847,6 +2821,8 @@ const spacesModel = {
     }
 
     this.cleanupEmptyCanvas();
+    this.cleanupRenderFade();
+    cleanupWidgetCards(this.widgetCards);
     this.widgetCards = {};
     grid.replaceChildren();
 
@@ -1860,10 +2836,11 @@ const spacesModel = {
       grid.style.removeProperty("height");
       grid.appendChild(emptyCanvas.root);
       this.emptyCanvasCleanup = startFloatingTitleAnimation(emptyCanvas.title, this.motionQuery);
+      this.renderFadeCleanup = playGridFadeIn(grid, this.motionQuery);
+      syncSpacesRuntimeState();
       return;
     }
 
-    const cacheToken = `${Date.now().toString(36)}-${spaceRecord.updatedAt}`;
     const resolvedLayout = this.resolveCurrentSpaceLayout(spaceRecord);
     const renderJobs = spaceRecord.widgetIds.map(async (widgetId) => {
       const layoutEntry = {
@@ -1876,7 +2853,7 @@ const spacesModel = {
       grid.appendChild(skeleton.card);
 
       try {
-        await renderWidgetCard(spaceRecord, widgetId, skeleton, cacheToken, loadToken, layoutEntry);
+        await renderWidgetCard(spaceRecord, widgetId, skeleton, loadToken, layoutEntry);
       } catch (error) {
         if (loadToken !== this.widgetLoadToken) {
           return;
@@ -1895,8 +2872,11 @@ const spacesModel = {
     });
 
     this.applyResolvedLayoutToCards(resolvedLayout, spaceRecord, {
-      centerOrigin: true
+      animateEntering: options.animateEntering,
+      centerOrigin: options.centerOrigin !== false,
+      previousRects: options.previousRects || null
     });
+    this.renderFadeCleanup = playGridFadeIn(grid, this.motionQuery);
     await Promise.allSettled(renderJobs);
   },
 
@@ -1928,6 +2908,46 @@ const spacesModel = {
     await this.handleExternalMutation(this.currentSpaceId);
   },
 
+  async refreshCurrentSpaceFromStorage(spaceId, options = {}) {
+    if (!spaceId || !this.currentSpace || this.currentSpaceId !== spaceId) {
+      await this.loadCurrentSpace(spaceId);
+      return;
+    }
+
+    this.widgetLoadToken += 1;
+    const loadToken = this.widgetLoadToken;
+    const previousRects = options.previousRects || captureWidgetCardRects(this.widgetCards);
+    const preservedCameraOffset = options.preserveCamera === false
+      ? { x: 0, y: 0 }
+      : { ...this.cameraOffsetPx };
+
+    try {
+      const spaceRecord = await readSpace(spaceId);
+
+      if (loadToken !== this.widgetLoadToken) {
+        return;
+      }
+
+      this.currentSpace = spaceRecord;
+      this.currentSpaceId = spaceRecord.id;
+      this.currentSpaceTitleDraft = spaceRecord.title;
+      this.cameraOffsetPx = preservedCameraOffset;
+      syncSpacesRuntimeState();
+      await this.renderCurrentSpace(spaceRecord, loadToken, {
+        animateEntering: options.animateEntering !== false,
+        centerOrigin: options.centerOrigin === true,
+        previousRects
+      });
+    } catch (error) {
+      if (loadToken !== this.widgetLoadToken) {
+        return;
+      }
+
+      logSpacesError("refreshCurrentSpaceFromStorage failed", error, { spaceId });
+      this.setNotice(formatErrorMessage(error, "Unable to refresh the current space."), "error");
+    }
+  },
+
   async handleRemovedSpace(spaceId) {
     await this.loadSpacesList();
 
@@ -1938,6 +2958,7 @@ const spacesModel = {
     this.currentSpace = null;
     this.currentSpaceId = "";
     this.currentSpaceTitleDraft = "";
+    syncSpacesRuntimeState();
 
     if (this.spaceList.length > 0) {
       await globalThis.space.router?.replaceTo(SPACES_ROUTE_PATH, {
@@ -1960,8 +2981,14 @@ const spacesModel = {
     await this.loadSpacesList();
 
     if (spaceId && this.currentSpaceId === spaceId) {
-      await this.loadCurrentSpace(spaceId);
+      await this.refreshCurrentSpaceFromStorage(spaceId, {
+        animateEntering: true,
+        preserveCamera: true
+      });
+      return;
     }
+
+    syncSpacesRuntimeState();
   },
 
   async refreshFromUi() {

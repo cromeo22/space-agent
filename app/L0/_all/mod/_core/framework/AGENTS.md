@@ -14,6 +14,7 @@ This module owns:
 
 - `js/initFw.js`: shared frontend bootstrap entry for framework-backed pages
 - `js/runtime.js`: runtime installation onto `globalThis.space`
+- `js/markdown-frontmatter.js`: markdown frontmatter parsing plus safe markdown-to-DOM rendering helpers
 - `js/server-config.js`: injected page-meta parsing for frontend-exposed backend runtime parameters
 - `js/extensions.js`: `space.extend`, HTML extension loading, JS hook loading, lookup caching, and batching
 - `js/moduleResolution.js`: propagation of `maxLayer` into framework-managed module and extension requests
@@ -40,9 +41,11 @@ Current boot order:
 
 - `space.api`
 - `space.config`
+- `space.chat` when an agent surface publishes the active thread messages plus attachment handles
 - `space.fw.createStore`
+- `space.utils.markdown.render(text, target)` as a simple browser wrapper around the shared marked renderer; it replaces `target` contents with a `.markdown` root when a target is provided
 - `space.utils.markdown.parseDocument`
-- `space.utils.yaml.parse`, `parseScalar`, and `serialize`
+- `space.utils.yaml.parse` and `stringify`, including multiline block-scalar strings used by persisted widget renderer source
 - `space.proxy`
 - `space.download`
 - `space.fetchExternal(...)`

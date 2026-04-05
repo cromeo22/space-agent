@@ -14,6 +14,20 @@
   --agent-thread-markdown-inline-bg: #111d31;
   --agent-thread-markdown-block-bg: #0c1626;
   --agent-thread-markdown-quote-border: rgba(148, 188, 255, 0.22);
+  --agent-thread-markdown-heading-color: var(--agent-thread-text-color);
+  --agent-thread-markdown-heading-weight: 600;
+  --agent-thread-markdown-h1-size: 1.22rem;
+  --agent-thread-markdown-h2-size: 1.08rem;
+  --agent-thread-markdown-h3-size: 1rem;
+  --agent-thread-markdown-h4-size: 0.94rem;
+  --agent-thread-markdown-h5-size: 0.9rem;
+  --agent-thread-markdown-h6-size: 0.86rem;
+  --agent-thread-markdown-heading-spacing: 0.8rem;
+  --agent-thread-markdown-rule-color: rgba(168, 186, 219, 0.18);
+  --agent-thread-markdown-table-border: rgba(168, 186, 219, 0.16);
+  --agent-thread-markdown-table-head-bg: rgba(148, 188, 255, 0.08);
+  --agent-thread-markdown-table-row-bg: rgba(10, 18, 31, 0.28);
+  --agent-thread-markdown-table-row-alt-bg: rgba(12, 22, 38, 0.6);
   --agent-thread-attachment-border: rgba(168, 186, 219, 0.16);
   --agent-thread-attachment-bg: rgba(18, 29, 51, 0.58);
   --agent-thread-attachment-user-bg: rgba(148, 188, 255, 0.14);
@@ -133,7 +147,8 @@
   background: rgba(19, 32, 51, 0.62);
 }
 
-.agent-thread-surface .message-row.user .message-content {
+.agent-thread-surface .message-row.user .message-content,
+.agent-thread-surface .message-row.user .message-markdown {
   text-align: left;
 }
 
@@ -144,6 +159,7 @@
   font-size: 0.94rem;
   line-height: 1.68;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .agent-thread-surface .message-content {
@@ -203,6 +219,122 @@
   padding-left: 0.95rem;
   border-left: 2px solid var(--agent-thread-markdown-quote-border);
   color: var(--agent-thread-muted-color);
+}
+
+.agent-thread-surface .message-markdown h1,
+.agent-thread-surface .message-markdown h2,
+.agent-thread-surface .message-markdown h3,
+.agent-thread-surface .message-markdown h4,
+.agent-thread-surface .message-markdown h5,
+.agent-thread-surface .message-markdown h6 {
+  margin: var(--agent-thread-markdown-heading-spacing) 0 0.45rem;
+  color: var(--agent-thread-markdown-heading-color);
+  font-weight: var(--agent-thread-markdown-heading-weight);
+  line-height: 1.24;
+}
+
+.agent-thread-surface .message-markdown h1 {
+  font-size: var(--agent-thread-markdown-h1-size);
+}
+
+.agent-thread-surface .message-markdown h2 {
+  font-size: var(--agent-thread-markdown-h2-size);
+}
+
+.agent-thread-surface .message-markdown h3 {
+  font-size: var(--agent-thread-markdown-h3-size);
+}
+
+.agent-thread-surface .message-markdown h4 {
+  font-size: var(--agent-thread-markdown-h4-size);
+}
+
+.agent-thread-surface .message-markdown h5 {
+  font-size: var(--agent-thread-markdown-h5-size);
+}
+
+.agent-thread-surface .message-markdown h6 {
+  font-size: var(--agent-thread-markdown-h6-size);
+}
+
+.agent-thread-surface .message-markdown li + li {
+  margin-top: 0.2rem;
+}
+
+.agent-thread-surface .message-markdown hr {
+  margin: 1rem 0;
+  border: 0;
+  border-top: 1px solid var(--agent-thread-markdown-rule-color);
+}
+
+.agent-thread-surface .message-markdown img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.8rem;
+}
+
+.agent-thread-surface .message-markdown .markdown-table-wrap,
+.agent-thread-surface .message-markdown .message-markdown-table-wrap {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 0.9rem;
+  border: 1px solid var(--agent-thread-markdown-table-border);
+  border-radius: 0.85rem;
+  background: var(--agent-thread-markdown-table-row-bg);
+}
+
+.agent-thread-surface .message-markdown .markdown-table-wrap > table,
+.agent-thread-surface .message-markdown .message-markdown-table-wrap > table {
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+  background: var(--agent-thread-markdown-table-row-bg);
+}
+
+.agent-thread-surface .message-markdown thead {
+  background: var(--agent-thread-markdown-table-head-bg);
+}
+
+.agent-thread-surface .message-markdown tbody tr:nth-child(even) {
+  background: var(--agent-thread-markdown-table-row-alt-bg);
+}
+
+.agent-thread-surface .message-markdown th,
+.agent-thread-surface .message-markdown td {
+  padding: 0.58rem 0.72rem;
+  border-bottom: 1px solid var(--agent-thread-markdown-table-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.agent-thread-surface .message-markdown th {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.agent-thread-surface .message-markdown td {
+  font-size: 0.88rem;
+  color: var(--color-text-secondary);
+}
+
+.agent-thread-surface .message-markdown thead tr:last-child th {
+  border-bottom: 1px solid var(--agent-thread-markdown-table-border);
+}
+
+.agent-thread-surface .message-markdown th + th,
+.agent-thread-surface .message-markdown td + td {
+  border-left: 1px solid var(--agent-thread-markdown-table-border);
+}
+
+.agent-thread-surface .message-markdown tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .agent-thread-surface .assistant-sequence-section {

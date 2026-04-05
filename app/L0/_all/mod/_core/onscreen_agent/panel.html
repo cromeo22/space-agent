@@ -6,8 +6,8 @@
     <script type="module" src="/mod/_core/onscreen_agent/store.js"></script>
   </head>
   <body>
-    <div x-data class="onscreen-agent-root agent-thread-surface">
-      <template x-if="$store.onscreenAgent">
+    <div x-data class="onscreen-agent-root agent-thread-surface" x-init="$nextTick(() => $store.onscreenAgent.init())">
+      <template x-if="$store.onscreenAgent && $store.onscreenAgent.shouldRenderShell">
         <section
           class="onscreen-agent-shell"
           :class="{
@@ -21,7 +21,7 @@
           :style="$store.onscreenAgent.positionStyle"
           @dragend.window="$store.onscreenAgent.resetAttachmentDragState()"
           @drop.window="$store.onscreenAgent.resetAttachmentDragState()"
-          x-init="$nextTick(() => $store.onscreenAgent.mount({ actionMenu: $refs.actionMenu, avatar: $refs.avatar, attachmentInput: $refs.attachmentInput, historyDialog: $refs.historyDialog, input: $refs.input, panel: $refs.panel, rawDialog: $refs.rawDialog, scroller: $refs.scroller, settingsDialog: $refs.settingsDialog, shell: $refs.shell, thread: $refs.thread }))"
+          x-init="$nextTick(() => $store.onscreenAgent.mount({ actionMenu: $refs.actionMenu, avatar: $refs.avatar, attachmentInput: $refs.attachmentInput, historyDialog: $refs.historyDialog, input: $refs.input, panel: $refs.panel, rawDialog: $refs.rawDialog, scroller: $refs.scroller, settingsDialog: $refs.settingsDialog, shell: $refs.shell, thread: $refs.thread, uiBubbleContent: $refs.uiBubbleContent }))"
           x-destroy="$store.onscreenAgent.unmount()"
         >
           <div class="onscreen-agent-cluster">
@@ -41,7 +41,7 @@
               aria-live="polite"
               aria-atomic="true"
             >
-              <span class="onscreen-agent-ui-bubble-text" x-text="$store.onscreenAgent.uiBubbleText"></span>
+              <div x-ref="uiBubbleContent"></div>
             </div>
             <button
               type="button"
@@ -239,7 +239,7 @@
                     <button
                       type="button"
                       class="onscreen-agent-footer-icon danger"
-                      :disabled="$store.onscreenAgent.isSending || $store.onscreenAgent.isLoadingDefaultSystemPrompt || $store.onscreenAgent.isCompactingHistory"
+                      :disabled="$store.onscreenAgent.isClearDisabled"
                       @click="$store.onscreenAgent.handleClearClick()"
                       aria-label="Reset chat"
                       title="Reset chat"
@@ -268,6 +268,7 @@
                     type="button"
                     class="space-popover-action"
                     :class="{ 'is-danger': action.danger }"
+                    :disabled="Boolean(action.disabled)"
                     @click="$store.onscreenAgent.submitComposerActionMenuAction(action.id)"
                   >
                     <x-icon x-text="action.icon"></x-icon>

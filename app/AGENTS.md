@@ -89,7 +89,7 @@ Current major first-party modules under `app/L0/_all/mod/_core/`:
 
 - `framework/`: frontend bootstrap, runtime primitives, component loader, extension system, shared utilities
 - `visual/`: shared visual language, canvas, chrome, buttons, dialog helpers, and conversation rendering primitives
-- `router/`: root routed shell for the authenticated app; route-level frame width and other shell-owned layout overrides belong here rather than in feature modules
+- `router/`: root routed shell for the authenticated app; route-level frame width, height or scroll policy, and other shell-owned layout overrides belong here rather than in feature modules, but routed pages own their own content padding
 - `admin/`: firmware-backed admin shell and panels
 - `onscreen_agent/`: floating routed overlay agent and the first-party user-facing agent surface
 - `onscreen_menu/`: top-right routed shell menu extension
@@ -201,10 +201,11 @@ Runtime guidance:
 - `globalThis.space` is scoped to the current window or iframe only; do not publish it into other browsing contexts
 - use `space.api` for authenticated backend calls
 - use `space.api.folderDownloadUrl(...)` when a folder download should stay as a browser attachment instead of fetching the archive blob into frontend memory
-- keep feature-owned runtime namespaces under `space` explicit and narrow; `_core/spaces` owns `space.spaces` for persisted space CRUD, widget authoring helpers, and manual layout persistence, and `_core/onscreen_agent` owns `space.onscreenAgent` for overlay display control and prompt submission
+- keep feature-owned runtime namespaces under `space` explicit and narrow; `_core/spaces` owns `space.current` for current-space widget authoring, live widget-state descriptors, and batch layout or toggle or removal helpers plus `space.spaces` for persisted space CRUD, loaded-space collections, lower-level widget/storage helpers, and spaces-owned prompt context injection, `_core/onscreen_agent` owns `space.onscreenAgent` for overlay display control and prompt submission, and agent surfaces publish the active thread snapshot at `space.chat`
 - use `space.api.userSelfInfo()` as the canonical browser-side identity and scope snapshot; it returns group membership plus the readable and writable logical app roots the current user can use from the frontend
 - use `space.config` for frontend reads of backend parameters that were explicitly marked `frontend_exposed`
-- use `space.utils.markdown` and `space.utils.yaml` for lightweight frontend parsing owned by browser modules
+- use `space.utils.markdown.render(text, target)` for lightweight shared markdown rendering into a `.markdown` wrapper and `space.utils.markdown.parseDocument(...)` for frontmatter parsing; keep feature-local presentation in the owning module's CSS
+- use `space.utils.yaml.parse(...)` and `space.utils.yaml.stringify(...)` for lightweight frontend YAML parsing and serialization owned by browser modules
 - browser storage is for small non-authoritative UI state; persistent user state belongs in app files or explicit backend APIs
 
 ## Visual Direction

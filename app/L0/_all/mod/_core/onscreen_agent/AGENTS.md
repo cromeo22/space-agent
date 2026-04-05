@@ -77,10 +77,12 @@ Prompt rules:
 - custom instructions are appended under `## User specific instructions`
 - skill frontmatter may include a `metadata` object for runtime-owned flags; `metadata.always_loaded: true` marks a readable skill file for automatic prompt inclusion
 - the runtime prompt appends the top-level onscreen skill catalog built from readable `mod/*/*/ext/skills/*/skill.md` files
-- after that catalog, the runtime appends a separate `## Automatically Loaded Skills` section containing the full skill file content for readable `mod/*/*/ext/skills/**/skill.md` entries whose frontmatter sets `metadata.always_loaded: true`
+- after that catalog, the runtime appends a separate `## Automatically Loaded Skills` section containing repeated `path: <skill-id>` lines plus the full skill file content for readable `mod/*/*/ext/skills/**/skill.md` entries whose frontmatter sets `metadata.always_loaded: true`
 - prompt construction exposes JS seams at `_core/onscreen_agent/prompt.js/fetchDefaultOnscreenAgentSystemPrompt`, `_core/onscreen_agent/prompt.js/fetchOnscreenAgentHistoryCompactPrompt`, `_core/onscreen_agent/prompt.js/buildOnscreenAgentSystemPromptSections`, and `_core/onscreen_agent/prompt.js/buildRuntimeOnscreenAgentSystemPrompt`
 - prompt extensions should prefer the sections seam when they need to append or replace whole prompt sections; the final builder seam is for last-mile rewrites of the assembled string
+- `_core/spaces` currently uses the sections seam to inject a live `## Current Open Space` block only while the routed spaces canvas is open, sourcing widget ids, names, order, positions, sizes, and state from `space.current`
 - the firmware prompt should treat `space.api.userSelfInfo().scope` as the canonical way to discover readable and writable frontend roots before development-oriented file changes
+- the firmware prompt should also remind the agent to `return await ...` for browser mutations that need confirmation, should explicitly use `return await space.current.renderWidget(...)` instead of fire-and-forget widget writes, should keep widget-rendering guidance short and example-driven, should point widget authors at `space.utils.markdown.render(text, target)` for simple markdown output inside widgets, should refer to the active thread as `space.chat`, should use `space.utils.yaml.parse(...)` plus `space.utils.yaml.stringify(...)`, and should keep the current spaces widget-size ceiling (`12x12`) explicit
 - `compact-prompt.md` is used for user-triggered history compaction
 - `compact-prompt-auto.md` is used for automatic compaction during the loop
 
@@ -97,6 +99,7 @@ Current stable seams:
 Current runtime namespace:
 
 - `store.js` also registers `space.onscreenAgent`
+- `store.js` also publishes the active overlay thread snapshot at `space.chat`, including `messages` and live `attachments` helpers for the current surface
 - `space.onscreenAgent.show(options?)` opens the overlay without submitting a prompt and preserves the current display mode unless `options.mode` explicitly requests compact or full
 - `space.onscreenAgent.submitPrompt(promptText, options?)` opens the overlay, seeds the composer, and submits or queues the prompt through the owned send loop while preserving the current display mode unless `options.mode` explicitly requests compact or full
 
@@ -123,7 +126,8 @@ Current overlay behavior:
 - in full mode, the history panel can be resized vertically from a full-width invisible handle that straddles the outer top or bottom border based on orientation, while a centered grip marks the draggable edge and the chosen height persists in config
 - when full mode mounts, the history shell resets its raw height to the currently available viewport space on the chosen side, using the panel geometry before mount and the history shell geometry after mount, so expansion never keeps a stale oversize height
 - the compact and full composer panels accept attachments from either the file picker or direct file drag-and-drop onto the chat box
-- saved `agent_x`, `agent_y`, and `display_mode` are loaded during init before prompt startup continues
+- saved `agent_x`, `agent_y`, and `display_mode` are loaded during init before prompt startup continues, and the floating shell stays unmounted until that startup config load has resolved so refreshes never flash the default bottom-left position before the stored coordinates are applied
+- the first shell paint should ease in with a short reveal once startup positioning is ready, but avoid ancestor opacity fades on the shell itself because they break the backdrop blur used by the history and composer surfaces
 - internal startup statuses such as prompt bootstrapping may gate controls, but they should not replace the composer placeholder because they are not user-relevant; user-visible errors and action results should still surface through `status`
 - when the persisted LLM settings still match the shipped defaults and the API key is blank, the composer blocks the full textarea area with a blurred overlay and centered `Set API key` action until credentials are configured
 - in compact mode, when a streamed assistant reply reaches the `_____javascript` separator, the UI bubble should surface the pre-execution reply text immediately while the composer status switches into the code-writing placeholder; do not wait for browser execution to finish before showing that bubble
@@ -131,13 +135,15 @@ Current overlay behavior:
 - while mounted, the store also re-checks visibility on resize, `visibilitychange`, `focus`, `pageshow`, and on a periodic timer so monitor changes or desktop switches cannot leave the astronaut permanently off-screen
 - browser execution blocks use the `_____javascript` separator and are executed locally through `execution.js`
 - the surface uses the shared `createAgentThreadView(...)` renderer from `_core/visual/conversation/thread-view.js`
-- `view.js` enables the shared marked-backed assistant markdown renderer for the overlay and assigns the `onscreen-agent-response-markdown` class so response-specific heading and table tuning stays local to this module
+- `view.js` enables the shared marked-backed chat-bubble markdown renderer for the overlay and assigns the `onscreen-agent-response-markdown` class so assistant-response-specific heading and table tuning stays local to this module
 - `panel.html` loads `response-markdown.css` after the base overlay stylesheet; keep assistant-response markdown element overrides there instead of patching `_core/visual` for overlay-only presentation, and style markdown tables through the shared `.message-markdown-table-wrap` wrapper rather than changing the table element into a scroll container
+- the compact floating UI bubble is a separate overlay surface owned by `panel.html`, `store.js`, and `onscreen-agent.css`; it should render through the shared markdown helper into a local content ref instead of using plain `x-text`
 - native dialogs use the shared dialog helpers from `_core/visual/forms/dialog.js`
 - lightweight action menus use the shared popover positioning helper from `_core/visual/chrome/popover.js`
 - the floating root and its compact action menu reserve effectively topmost z-index bands so routed content and dynamically rendered surfaces do not obstruct the overlay controls
 - the compact composer action menu stays hidden through its initial positioning passes, closes when avatar dragging starts, and chooses up or down placement from the trigger button midpoint against the 50% viewport line rather than reusing the UI bubble breakpoint
-- the loop supports queued follow-up submissions, stop requests, attachment revalidation, and animation-frame streaming patches
+- history-destructive controls must stay disabled when the thread is empty: full-mode footer `Clear chat`, full-mode footer `Compact context`, and compact-mode action-menu entries for those same actions should all be unavailable until history exists
+- the loop supports queued follow-up submissions, stop requests, attachment revalidation, and animation-frame streaming patches; when the direct streaming-row patch cannot apply, the full-mode thread should fall back to a frame-batched full render so assistant history still updates live
 - prompt-history previews and token counts are derived from the prepared outbound request payload so request-prep extensions stay visible in the context window instead of only affecting the final fetch call
 - when an execution follow-up turn returns no assistant content, the runtime retries the same request once automatically before sending a protocol-correction user message
 - empty-response protocol-correction messages must stay short, must not re-echo the prior execution output, and should tell the agent to continue from the execution output above
