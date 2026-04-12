@@ -45,6 +45,7 @@ Current module-local docs in the app tree:
 - `app/L0/_all/mod/_core/admin/views/modules/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_agent/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_menu/AGENTS.md`
+- `app/L0/_all/mod/_core/open_router/AGENTS.md`
 - `app/L0/_admin/mod/_core/overlay_agent/AGENTS.md`
 
 Update rules:
@@ -118,6 +119,7 @@ Current major first-party modules under `app/L0/_all/mod/_core/`:
 - `promptinclude/`: headless promptinclude discovery and onscreen-agent prompt injection for readable `*.system.include.md` and `*.transient.include.md` app files
 - `onscreen_agent/`: floating routed overlay agent and the first-party user-facing agent surface
 - `onscreen_menu/`: top-right routed shell menu extension, Home shortcut to the empty default route, and `_core/onscreen_menu/items` feature-item seam
+- `open_router/`: headless OpenRouter request-policy module that extends the admin and onscreen API transport seams instead of hardcoding provider-specific headers into the chat runtimes
 - `skillset/`: first-party reusable onscreen skill packs plus browser helper scripts that those skills import through stable `/mod/...` paths
 - `webllm/`: unlisted routed browser-only WebLLM test surface with a module-local worker, vendored browser runtime, compact searchable prebuilt model loading, expert-only compiled custom model loading, and simple throughput reporting
 - `huggingface/`: dashboard-listed Local LLM page backed by a routed browser-only Hugging Face Transformers.js test surface, with a module-local singleton runtime manager and worker, direct Hub model loading, a vendored local browser runtime for upstream testing, shared saved-model state and browser-wide last-loaded selection reused by the admin and onscreen agents in the same browser context, and simple throughput reporting

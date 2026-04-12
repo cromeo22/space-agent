@@ -5,18 +5,13 @@ import { mergeConsecutiveChatMessages } from "/mod/_core/framework/js/chat-messa
 import * as proxyUrl from "/mod/_core/framework/js/proxy-url.js";
 import { getHuggingFaceManager } from "/mod/_core/huggingface/manager.js";
 
-function createHeaders(endpoint, apiKey) {
+function createHeaders(apiKey) {
   const headers = {
     "Content-Type": "application/json"
   };
 
   if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;
-  }
-
-  if (endpoint.includes("openrouter.ai")) {
-    headers["HTTP-Referer"] = window.location.origin;
-    headers["X-Title"] = "Space Agent Admin";
   }
 
   return headers;
@@ -165,6 +160,31 @@ function createRequestBody(settings, systemPrompt, messages) {
   };
 }
 
+function buildFetchRequestInit(apiRequest, signal) {
+  const requestInit =
+    apiRequest?.requestInit && typeof apiRequest.requestInit === "object"
+      ? { ...apiRequest.requestInit }
+      : {};
+  const headers =
+    apiRequest?.headers && typeof apiRequest.headers === "object"
+      ? { ...apiRequest.headers }
+      : {};
+
+  requestInit.method = typeof apiRequest?.method === "string" && apiRequest.method.trim() ? apiRequest.method : "POST";
+  requestInit.headers = headers;
+  requestInit.signal = signal;
+
+  if (!("body" in requestInit)) {
+    if (apiRequest && "body" in apiRequest) {
+      requestInit.body = apiRequest.body;
+    } else if (apiRequest?.requestBody !== undefined) {
+      requestInit.body = JSON.stringify(apiRequest.requestBody);
+    }
+  }
+
+  return requestInit;
+}
+
 function resolveChatRequestUrl(apiEndpoint) {
   if (!proxyUrl.isProxyableExternalUrl(apiEndpoint)) {
     return apiEndpoint;
@@ -278,6 +298,26 @@ async function readStreamingResponse(response, onDelta) {
   }
 }
 
+export const prepareAdminAgentApiRequest = globalThis.space.extend(
+  import.meta,
+  async function prepareAdminAgentApiRequest({ settings, systemPrompt, messages } = {}) {
+    const effectiveSettings =
+      settings && typeof settings === "object" ? settings : config.DEFAULT_ADMIN_CHAT_SETTINGS;
+    const apiEndpoint = String(effectiveSettings?.apiEndpoint || "").trim();
+
+    return {
+      apiEndpoint,
+      headers: createHeaders(String(effectiveSettings?.apiKey || "").trim()),
+      messages: Array.isArray(messages) ? messages : [],
+      method: "POST",
+      requestBody: createRequestBody(effectiveSettings, systemPrompt, messages),
+      requestUrl: resolveChatRequestUrl(apiEndpoint),
+      settings: effectiveSettings,
+      systemPrompt: typeof systemPrompt === "string" ? systemPrompt : ""
+    };
+  }
+);
+
 async function streamAdminAgentApiCompletion({ settings, systemPrompt, messages, onDelta, signal }) {
   if (!settings.apiEndpoint.trim()) {
     throw new Error("Set an API endpoint before sending a message.");
@@ -291,12 +331,13 @@ async function streamAdminAgentApiCompletion({ settings, systemPrompt, messages,
     throw new Error("Set a model before sending a message.");
   }
 
-  const requestUrl = resolveChatRequestUrl(settings.apiEndpoint);
-  const response = await fetch(requestUrl, {
-    method: "POST",
-    headers: createHeaders(settings.apiEndpoint, settings.apiKey.trim()),
-    body: JSON.stringify(createRequestBody(settings, systemPrompt, messages)),
-    signal
+  const apiRequest = await prepareAdminAgentApiRequest({
+    messages,
+    settings,
+    systemPrompt
+  });
+  const response = await fetch(apiRequest.requestUrl, {
+    ...buildFetchRequestInit(apiRequest, signal)
   });
 
   if (!response.ok) {

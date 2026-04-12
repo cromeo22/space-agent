@@ -63,6 +63,7 @@ The command tree prefers a small number of readable top-level commands with expl
 Current behavior:
 
 - before fetching, it pins `origin` to `https://github.com/agent0ai/space-agent.git`
+- for GitHub remotes, it uses `SPACE_GITHUB_TOKEN` when set and otherwise sends no GitHub auth header
 - with no target, it fast-forwards the current or recoverable branch from `origin`
 - with `--branch <branch>` or a branch positional target, it reattaches and updates that branch
 - with a tag or commit target, it moves the current or recovered branch to that exact revision when possible
@@ -78,8 +79,9 @@ Current behavior:
 - requires `CUSTOMWARE_PATH`, whether provided as a launch param, stored `.env` value, or process environment variable
 - normalizes `CUSTOMWARE_PATH` to an absolute path before passing it to child servers
 - starts real `space serve` children on private loopback `HOST=127.0.0.1 PORT=0`
-- passes every other resolved runtime parameter to child `serve` processes as launch arguments
+- treats all non-supervisor CLI arguments as opaque `space serve` launch arguments, only rewriting child `HOST`, child `PORT`, and `CUSTOMWARE_PATH`
 - periodically checks the watched Git remote and branch for a newer revision when `--auto-update-interval` is greater than `0`
+- for GitHub remotes, update checks and staged release clones use `SPACE_GITHUB_TOKEN` when set and otherwise send no GitHub auth header
 - accepts `--auto-update-interval <seconds>`, defaulting to `300`; values less than or equal to `0` disable update checks and leave crash-restart supervision active
 - stages updates in `CUSTOMWARE_PATH/.space-supervisor/releases/` by default
 - runs `npm install --omit=optional` inside staged releases
@@ -94,7 +96,7 @@ Current behavior:
 Current usage:
 
 - `node space supervise CUSTOMWARE_PATH=/srv/space/customware`
-- `node space supervise --host 0.0.0.0 --port 3000 CUSTOMWARE_PATH=/srv/space/customware`
+- `node space supervise HOST=0.0.0.0 PORT=3000 CUSTOMWARE_PATH=/srv/space/customware`
 - `node space supervise --branch main --auto-update-interval 300 CUSTOMWARE_PATH=/srv/space/customware`
 - `node space supervise --auto-update-interval 0 CUSTOMWARE_PATH=/srv/space/customware`
 
@@ -117,6 +119,8 @@ Supervisor state:
 
 The supervisor intentionally avoids changing `server/` lifecycle code. Its only runtime assumptions about a child are that `node space serve` prints the existing listening URL line and that `/api/health` succeeds after startup.
 
+It also intentionally avoids depending on server runtime-param parsing so new `space serve` launch arguments can flow through supervision without needing a supervisor-specific update first.
+
 ## `serve`
 
 `node space serve` starts the local runtime.
@@ -129,13 +133,11 @@ Current startup output:
 Current override forms:
 
 - `PARAM=VALUE`
-- `--host <host>`
-- `--port <port>`
 
 Launch-time override precedence is:
 
 1. launch arguments
-2. stored `.env` values written by `node space set`
+2. stored `.env` values written by `node space set KEY=VALUE`
 3. process environment variables
 4. schema defaults from `commands/params.yaml`
 
@@ -174,7 +176,7 @@ Only params with `frontend_exposed: true` are injected into page-shell meta tags
 - `CUSTOMWARE_GIT_HISTORY`: enables optional debounced local Git history repositories for writable `L1/<group>/` and `L2/<user>/` roots; defaults to `true`; owner-root commits wait 10 seconds of quiet, then shorten to 5 seconds after 1 minute of pending writes, 1 second after 5 minutes, and immediate commit after 10 minutes
 - `USER_FOLDER_SIZE_LIMIT_BYTES`: optional per-user `L2/<user>/` folder cap in bytes; `0` disables it, and positive values make app-file mutations reject projected growth over the cap while still allowing mutations that reduce an already-over-limit folder
 - `user` and `group` commands flush pending local-history commits before returning when `CUSTOMWARE_GIT_HISTORY` is enabled because those commands are short-lived processes
-- `node space set CUSTOMWARE_PATH <path>` should be run before creating users or groups when writable state should live outside the source checkout, because `user` and `group` commands resolve that stored parameter before deciding where `L1` and `L2` files belong
+- `node space set CUSTOMWARE_PATH=<path>` should be run before creating users or groups when writable state should live outside the source checkout, because `user` and `group` commands resolve that stored parameter before deciding where `L1` and `L2` files belong
 - `node space supervise` requires `CUSTOMWARE_PATH` and uses it as the stable writable state boundary across source-release swaps
 
 ## Practical Reading Order

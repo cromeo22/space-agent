@@ -14,6 +14,15 @@ const LEGACY_ROUTE_REDIRECTS = new Map([
 
 const LOGOUT_ROUTE = "/logout";
 const PAGE_RESOURCE_PREFIX = "/pages/res/";
+const ROOT_PAGE_RESOURCE_ALIASES = new Map([
+  ["/favicon.ico", "/res/favicon.ico"],
+  ["/favicon-16x16.png", "/res/favicon-16x16.png"],
+  ["/favicon-32x32.png", "/res/favicon-32x32.png"],
+  ["/apple-touch-icon.png", "/res/apple-touch-icon.png"],
+  ["/android-chrome-192x192.png", "/res/android-chrome-192x192.png"],
+  ["/android-chrome-512x512.png", "/res/android-chrome-512x512.png"],
+  ["/site.webmanifest", "/res/site.webmanifest"]
+]);
 const FRONTEND_CONFIG_META_NAME = "space-config";
 const ENTER_GUARD_PLACEHOLDER = "<!-- SPACE_SINGLE_USER_ENTER_GUARD -->";
 const ENTER_GUARD_SCRIPT_TAG = '    <script src="/pages/res/enter-guard.js"></script>';
@@ -232,6 +241,20 @@ function resolvePageResourceRequest(pagesDir, pathname) {
   };
 }
 
+function resolveRootPageResourceRequest(pagesDir, pathname) {
+  const normalizedPath = path.posix.normalize(pathname || "/");
+  const aliasedPath = ROOT_PAGE_RESOURCE_ALIASES.get(normalizedPath);
+
+  if (!aliasedPath) {
+    return null;
+  }
+
+  return {
+    filePath: resolvePathWithinRoot(pagesDir, aliasedPath),
+    kind: "resource"
+  };
+}
+
 async function handlePageRequest(res, requestUrl, options = {}) {
   const { auth, pagesDir, requestContext, runtimeParams } = options;
 
@@ -241,14 +264,16 @@ async function handlePageRequest(res, requestUrl, options = {}) {
   }
 
   const pageResourceRequest = resolvePageResourceRequest(pagesDir, requestUrl.pathname);
+  const rootPageResourceRequest = resolveRootPageResourceRequest(pagesDir, requestUrl.pathname);
+  const resourceRequest = pageResourceRequest || rootPageResourceRequest;
 
-  if (pageResourceRequest) {
-    if (!pageResourceRequest.filePath) {
+  if (resourceRequest) {
+    if (!resourceRequest.filePath) {
       sendNotFound(res, createSessionCleanupHeaders(requestContext, auth));
       return;
     }
 
-    sendFile(res, pageResourceRequest.filePath, {
+    sendFile(res, resourceRequest.filePath, {
       headers: createSessionCleanupHeaders(requestContext, auth)
     });
     return;

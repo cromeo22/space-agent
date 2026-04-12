@@ -256,6 +256,16 @@ export function sanitizeRemoteUrl(remoteUrl) {
   }
 }
 
+export function isGitHubRemoteUrl(remoteUrl) {
+  try {
+    const parsedUrl = new URL(String(remoteUrl || "").trim());
+    return /^github\.com$/i.test(parsedUrl.hostname);
+  } catch {
+    const value = String(remoteUrl || "").trim();
+    return /(?:^|@)github\.com(?::|\/)/i.test(value);
+  }
+}
+
 export function normalizeRemoteUrl(remoteUrl) {
   const value = String(remoteUrl || "").trim();
   if (!value) {
@@ -317,11 +327,9 @@ export function resolveGitAuth(remoteUrl, options = {}, env = process.env) {
     // Ignore URL parsing problems here. The caller already validated the URL.
   }
 
-  const envToken =
-    env.SPACE_GIT_TOKEN ||
-    env.GITHUB_TOKEN ||
-    env.GH_TOKEN ||
-    "";
+  const envToken = isGitHubRemoteUrl(remoteUrl)
+    ? env.SPACE_GITHUB_TOKEN || ""
+    : env.SPACE_GIT_TOKEN || env.GITHUB_TOKEN || env.GH_TOKEN || "";
 
   return {
     token: String(envToken || "").trim(),

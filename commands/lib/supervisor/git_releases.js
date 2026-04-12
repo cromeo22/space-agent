@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { buildBasicAuthHeader } from "../../../server/lib/git/shared.js";
+
 const DEFAULT_REMOTE_NAME = "origin";
 const DEFAULT_REMOTE_URL = "https://github.com/agent0ai/space-agent.git";
 const RELEASE_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
@@ -26,6 +28,20 @@ function sanitizeRemoteUrl(remoteUrl) {
   } catch {
     return value;
   }
+}
+
+function buildGitAuthConfigArgs(remoteUrl, env = process.env) {
+  if (!/^https?:\/\//i.test(String(remoteUrl || "").trim())) {
+    return [];
+  }
+
+  const authorizationHeader = buildBasicAuthHeader(remoteUrl, {}, env);
+
+  if (!authorizationHeader) {
+    return [];
+  }
+
+  return ["-c", `http.extraHeader=Authorization: ${authorizationHeader}`];
 }
 
 function runProcess(command, args, options = {}) {
@@ -224,7 +240,7 @@ async function resolveUpdateSource(options) {
 async function readRemoteBranchRevision({ branchName, projectRoot, remoteUrl }) {
   const output = await readProcess(
     "git",
-    ["ls-remote", "--heads", remoteUrl, `refs/heads/${branchName}`],
+    [...buildGitAuthConfigArgs(remoteUrl), "ls-remote", "--heads", remoteUrl, `refs/heads/${branchName}`],
     {
       cwd: projectRoot,
       timeoutMs: REMOTE_CHECK_TIMEOUT_MS
@@ -279,7 +295,16 @@ async function installReleaseDependencies(releaseDir, env) {
 async function cloneRelease({ branchName, env, remoteUrl, revision, targetDir, tempDir }) {
   await runProcess(
     "git",
-    ["clone", "--no-checkout", "--single-branch", "--branch", branchName, remoteUrl, tempDir],
+    [
+      ...buildGitAuthConfigArgs(remoteUrl, env),
+      "clone",
+      "--no-checkout",
+      "--single-branch",
+      "--branch",
+      branchName,
+      remoteUrl,
+      tempDir
+    ],
     {
       cwd: path.dirname(tempDir),
       env,
@@ -363,6 +388,7 @@ async function ensureReleaseForRevision(options) {
 
 export {
   DEFAULT_REMOTE_URL,
+  buildGitAuthConfigArgs,
   ensureReleaseForRevision,
   readRemoteBranchRevision,
   resolveUpdateSource,

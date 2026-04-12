@@ -51,9 +51,9 @@ This module owns:
 - `skills.js`: onscreen skill discovery, skill frontmatter metadata flags, `space.skills.load(...)`, and skill-related JS extension seams
 - `llm.js`, `api.js`, `execution.js`, `attachments.js`, and `llm-params.js`: local runtime helpers
 - `llm.js` owns LLM-facing system-prompt file loading, optional example-message construction, always-loaded skill injection into the system prompt, runtime system-prompt assembly, prompt-instance caching, separate transient-message construction, final request assembly, history-compaction prompt loading, and the model-facing JS extension seams
-- `api.js` owns chat transport, HTTP error handling, streaming response parsing, and the shared `OnscreenAgentLlmClient` superclass plus provider subclasses for OpenAI-compatible API streaming and local Hugging Face streaming; prompt-shaping logic lives in `llm.js`
+- `api.js` owns chat transport, HTTP error handling, streaming response parsing, the shared `OnscreenAgentLlmClient` superclass plus provider subclasses for OpenAI-compatible API streaming and local Hugging Face streaming, and the API-request preparation seam `prepareOnscreenAgentApiRequest`; prompt-shaping logic lives in `llm.js`
 - `llm-params.js` delegates YAML parsing to the shared framework `js/yaml-lite.js` utility but still enforces the overlay-specific top-level `key: value` params contract
-- `config.js` and `storage.js`: persisted settings, position, optional edge-hidden pose, display mode, and history
+- `config.js` and `storage.js`: persisted settings, browser-stored overlay UI state, and history
 - `prompts/`: shipped prompt files and prompt-local documentation
 - `res/`: overlay-local assets
 - the `space.onscreenAgent` runtime namespace for overlay display control and externally triggered prompt submission
@@ -63,6 +63,7 @@ This module owns:
 Current persistence paths:
 
 - config: `~/conf/onscreen-agent.yaml`
+- browser UI state: `sessionStorage["space.onscreenAgent.uiState"]` with `localStorage["space.onscreenAgent.uiState"]` as fallback
 - history: `~/hist/onscreen-agent.json`
 
 Current config fields include:
@@ -74,6 +75,9 @@ Current config fields include:
 - `huggingface_model`
 - `huggingface_dtype`
 - optional `custom_system_prompt`
+
+Current browser UI state fields include:
+
 - `agent_x`
 - `agent_y`
 - optional `hidden_edge`
@@ -82,10 +86,11 @@ Current config fields include:
 
 Legacy compatibility:
 
-- `display_mode` is the canonical persisted mode field
-- `storage.js` still accepts legacy `collapsed` values when older configs are loaded
-- `storage.js` also normalizes numeric coordinate scalars from the lightweight YAML parser before the overlay store applies `agent_x` and `agent_y`, and it normalizes `hidden_edge` through the shared config helper before the store trusts the peeking state
-- when config is rewritten, legacy `collapsed` is mirrored from `display_mode` so the two fields do not drift
+- `display_mode` is the canonical persisted mode field for browser UI state
+- browser UI state loads from `sessionStorage` first, then `localStorage`, then legacy config fields as a migration fallback when browser storage is still empty
+- `storage.js` still accepts legacy `collapsed` values when older browser state or configs are loaded
+- `storage.js` also normalizes numeric coordinate scalars before the overlay store applies `agent_x` and `agent_y`, and it normalizes `hidden_edge` through the shared config helper before the store trusts the peeking state
+- when config is rewritten, overlay position and display state fields must not be written back into `~/conf/onscreen-agent.yaml`
 
 Current defaults:
 
@@ -116,6 +121,7 @@ Prompt rules:
 - prompt construction exposes JS seams at `_core/onscreen_agent/llm.js/fetchDefaultOnscreenAgentSystemPrompt`, `_core/onscreen_agent/llm.js/fetchOnscreenAgentHistoryCompactPrompt`, `_core/onscreen_agent/llm.js/buildOnscreenAgentSystemPromptSections`, `_core/onscreen_agent/llm.js/buildOnscreenAgentExampleMessages`, `_core/onscreen_agent/llm.js/buildOnscreenAgentHistoryMessages`, `_core/onscreen_agent/llm.js/buildOnscreenAgentTransientSections`, `_core/onscreen_agent/llm.js/buildOnscreenAgentPromptInput`, and `_core/onscreen_agent/llm.js/buildRuntimeOnscreenAgentSystemPrompt`
 - prompt extensions should prefer the sections seam when they need to append or replace whole prompt sections; the final builder seam is for last-mile rewrites of the assembled string
 - request preparation should run through the shared prompt-input builder in `llm.js`, which wraps each prepared user-role message in either a `_____user` block for real human submissions or a `_____framework` block for framework-generated follow-up turns such as execution output, preserves the system or examples or history or transient section boundaries in the outbound payload, and emits transient runtime context as its own trailing `_____transient` message when any transient sections exist
+- the API-mode fetch branch must finalize its upstream request through `api.js` seam `_core/onscreen_agent/api.js/prepareOnscreenAgentApiRequest`; provider-specific headers or body rewrites belong in extension modules such as `_core/open_router`, not in `llm.js`
 - `api.js` may fold consecutive prepared `user` or `assistant` payload messages into alternating transport turns with `\n\n` joins immediately before the fetch call, but that transport-only fold must not mutate prepared prompt entries, prompt-history state, or stored live history
 - the built-in example extension under `ext/js/_core/onscreen_agent/llm.js/buildOnscreenAgentExampleMessages/end/user-self-info.js` should prepend a framework prompt asking the agent to check user detail, an assistant execution reply that calls `space.api.userSelfInfo()`, and a framework execution-result message populated with the live API result so the model sees both the expected execution format and the current user snapshot
 - the top-level skill catalog and `auto loaded` block are model-facing prompt context and therefore belong to `llm.js` orchestration even though `skills.js` still owns low-level skill discovery helpers and `space.skills.load(...)`
@@ -174,7 +180,7 @@ Current stable seams:
 - `skills.js` exposes `_core/onscreen_agent/skills.js/listDiscoveredSkillFiles`, `_core/onscreen_agent/skills.js/loadOnscreenSkillIndex`, `_core/onscreen_agent/skills.js/loadOnscreenSkillCatalog`, `_core/onscreen_agent/skills.js/buildOnscreenSkillsPromptSection`, `_core/onscreen_agent/skills.js/buildOnscreenAutomaticallyLoadedSkillsPromptSection`, `_core/onscreen_agent/skills.js/loadOnscreenSkill`, and `_core/onscreen_agent/skills.js/installOnscreenSkillRuntime`; use these for skill discovery, virtual skills, skill-catalog source data, overriding automatic-skill source generation, overriding skill loads, or augmenting `space.skills`
 - `llm.js` exposes `_core/onscreen_agent/llm.js/fetchDefaultOnscreenAgentSystemPrompt`, `_core/onscreen_agent/llm.js/fetchOnscreenAgentHistoryCompactPrompt`, `_core/onscreen_agent/llm.js/buildOnscreenAgentSystemPromptSections`, `_core/onscreen_agent/llm.js/buildOnscreenAgentExampleMessages`, `_core/onscreen_agent/llm.js/buildOnscreenAgentHistoryMessages`, `_core/onscreen_agent/llm.js/buildRuntimeOnscreenAgentSystemPrompt`, `_core/onscreen_agent/llm.js/buildOnscreenAgentTransientSections`, `_core/onscreen_agent/llm.js/buildOnscreenAgentPromptInput`, `_core/onscreen_agent/llm.js/buildOnscreenAgentPromptMessageContext`, `_core/onscreen_agent/llm.js/createOnscreenAgentPromptInstance`, and `_core/onscreen_agent/llm.js/prepareOnscreenAgentCompletionRequest`; use these when the extension changes model-facing context, including system-prompt sections, example conversations, transient blocks, prompt-instance lifecycle, or final outbound message shaping
 - `execution.js` exposes `_core/onscreen_agent/execution.js/validateOnscreenAgentExecutionBlockPlan`; this seam owns block-level execution-plan validation, should stay generic to the overlay execution protocol, and feature modules should attach their own task-specific validators from `ext/js/` instead of adding those checks directly to `execution.js`
-- `api.js` exposes `_core/onscreen_agent/api.js/streamOnscreenAgentCompletion` as the transport seam
+- `api.js` exposes `_core/onscreen_agent/api.js/streamOnscreenAgentCompletion` as the transport seam and `_core/onscreen_agent/api.js/prepareOnscreenAgentApiRequest` as the prepared-request mutation seam for API-mode fetches
 - `store.js` exposes `_core/onscreen_agent/store.js/processOnscreenAgentMessage`; it runs before overlay messages are committed or reused after key lifecycle steps and receives a context object with `phase`, `message`, `history`, and `store`
 
 Current runtime namespace:
@@ -203,23 +209,23 @@ Current overlay behavior:
 - the shell supports compact and full display modes
 - avatar drag positioning, edge-hide peeking, action menus, history-edge resizing, and visibility recovery are owned by `store.js`
 - `panel.html` passes `shell`, `avatar`, panel, thread, and dialog refs into `store.js`; the store uses those refs to clamp the saved position against the current viewport, to keep edge-hidden poses snapped with roughly 55 percent of the astronaut still visible, and to detect when the astronaut has drifted too far to recover cleanly
-- dragging the avatar past the left, right, top, or bottom viewport edge should first hit a dead zone at the in-screen clamp that matches the reveal-threshold distance so corner placement stays possible, then snap the shell into a persisted `hidden_edge` pose after the pointer crosses that dead zone; the astronaut rotates clockwise on the left edge, counterclockwise on the right edge, upside down on the top edge, and upright on the bottom edge, and the chat body collapses until the avatar is revealed again
+- dragging the avatar past the left, right, top, or bottom viewport edge should first hit a dead zone at the in-screen clamp that matches the reveal-threshold distance so corner placement stays possible, then snap the shell into a browser-persisted `hidden_edge` pose after the pointer crosses that dead zone; the astronaut rotates clockwise on the left edge, counterclockwise on the right edge, upside down on the top edge, and upright on the bottom edge, and the chat body collapses until the avatar is revealed again
 - while hidden on an edge, dragging should keep the astronaut attached to that edge until the pointer crosses back past the in-screen reveal threshold; a click on the hidden astronaut should slide it back to that threshold position and restore the previously active compact or full chat body
 - the full-mode history subtree mounts only in full mode; compact mode does not keep a history container mounted
 - the full-mode history uses a non-scrolling outer shell for placement, chrome, and the resize grip, with an inner scroller that owns thread overflow
 - in full mode, the history panel can be resized vertically from a full-width invisible handle that straddles the outer top or bottom border based on orientation, while a centered grip marks the draggable edge and the chosen height persists in config
-- compact-to-full and full-to-compact switches should animate at the shell chrome layer: `store.js` owns a short display-mode transition phase, while `onscreen-agent.css` animates body width, panel chrome, and full-mode history entry so the overlay expands or settles instead of snapping
+- compact-to-full and full-to-compact switches should animate at the shell chrome layer: `store.js` owns a short display-mode transition phase, while `onscreen-agent.css` animates body width, panel chrome, and full-mode history entry so the overlay expands or settles instead of snapping; the collapse animation should keep the compact composer anchored and at its final scale instead of introducing a late positional or size snap when the phase clears
 - when full mode mounts or the viewport changes, the store keeps the raw persisted history height instead of rewriting it to the current viewport fit; the rendered height is clamped against the currently available space on that side so reloads preserve the chosen size while smaller screens still fit
 - the compact and full composer panels accept attachments from either the file picker or direct file drag-and-drop onto the chat box
 - keyboard submit from the composer textarea and the form submit path may send a new message or queue a follow-up draft, but they must never trigger `requestStop()`; stopping the active loop stays an explicit primary-button click only
-- saved `agent_x`, `agent_y`, optional `hidden_edge`, and `display_mode` are loaded during init before prompt startup continues, and the floating shell stays unmounted until that startup config load has resolved so refreshes never flash the default bottom-left position before the stored coordinates and peeking state are applied
+- saved browser UI state for `agent_x`, `agent_y`, optional `hidden_edge`, `history_height`, and `display_mode` is loaded during init before prompt startup continues, and the floating shell stays unmounted until that startup load has resolved so refreshes never flash the default bottom-left position before the stored coordinates and peeking state are applied
 - the first shell paint should ease in with a short reveal once startup positioning is ready, but avoid ancestor opacity fades on the shell itself because they break the backdrop blur used by the history and composer surfaces
 - internal startup statuses such as prompt bootstrapping may gate controls, but they should not replace the composer placeholder because they are not user-relevant; user-visible errors and action results should still surface through `status`
 - when the persisted LLM settings still match the shipped defaults and the API key is blank, the composer blocks the full textarea area with a blurred overlay and centered `Set API key` action until credentials are configured
 - in compact mode, the floating UI bubble should stream the assistant reply live during the response without waiting for completion, but UI updates may be coalesced to animation frames and must render only the text before the execution separator
 - compact-mode bubble streaming must suppress a trailing partial execution marker such as `_____` while the separator is still arriving, and once `_____javascript` appears it must ignore that marker and everything after it
 - when the shell is restored into an edge-hidden pose, the collapsed chat body may stay mounted for layout continuity but its hidden panel and history surfaces must not remain hit-testable or capture page scrolling while invisible; only the visible avatar and any allowed hint bubble may keep interaction
-- after mount and after config load, the store re-clamps the saved position to the current viewport and persists any correction back to config
+- after mount and after browser UI state load, the store re-clamps the saved position to the current viewport and persists any correction back to both browser storage tiers
 - while mounted, the store also re-checks visibility on resize, `visibilitychange`, `focus`, `pageshow`, and on a periodic timer so monitor changes or desktop switches cannot leave the astronaut permanently off-screen
 - the onboarding hint `**Drag** me, **tap** me.` now starts only from overlay mount timing, never from page load; `store.js` starts the 2-second countdown during `mount`, then auto-hides the hint 3 seconds after it becomes visible
 - that startup hint is a dedicated `panel.html` bubble controlled by `isStartupHintVisible`, not a generic `showUiBubble(...)` message; keep it isolated from assistant-bubble lifecycle, markdown rendering, auto-hide timing, and hidden-edge suppression

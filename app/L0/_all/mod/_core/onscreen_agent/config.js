@@ -1,5 +1,6 @@
 export const ONSCREEN_AGENT_CONFIG_PATH = "~/conf/onscreen-agent.yaml";
 export const ONSCREEN_AGENT_HISTORY_PATH = "~/hist/onscreen-agent.json";
+export const ONSCREEN_AGENT_UI_STATE_STORAGE_KEY = "space.onscreenAgent.uiState";
 export const DEFAULT_ONSCREEN_AGENT_MAX_TOKENS = 64_000;
 export const ONSCREEN_AGENT_LLM_PROVIDER = Object.freeze({
   API: "api",

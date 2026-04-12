@@ -8,6 +8,7 @@ Primary sources:
 - `app/L0/_all/mod/_core/admin/views/agent/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/views/agent/store.js`
 - `app/L0/_all/mod/_core/admin/views/agent/api.js`
+- `app/L0/_all/mod/_core/open_router/AGENTS.md`
 - `app/L0/_all/mod/_core/admin/views/agent/huggingface.js`
 - `app/L0/_all/mod/_core/admin/views/agent/panel.html`
 
@@ -49,6 +50,8 @@ Switching providers does not fork the rest of the admin agent loop. The admin su
 - streaming into the thread view
 
 Only the final LLM transport call branches.
+
+For remote API mode, `views/agent/api.js` now finalizes the upstream request through extension seam `_core/admin/views/agent/api.js/prepareAdminAgentApiRequest`. Provider-specific request policy such as OpenRouter headers belongs in headless helper modules like `_core/open_router`, so the admin runtime keeps only the generic fetch path plus the prepared request object.
 
 ## Local Runtime Layer
 

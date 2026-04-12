@@ -7,6 +7,7 @@ const MIME_TYPES = {
   ".gif": "image/gif",
   ".htm": "text/html; charset=utf-8",
   ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
   ".js": "text/javascript; charset=utf-8",
@@ -17,6 +18,7 @@ const MIME_TYPES = {
   ".svg": "image/svg+xml",
   ".ttf": "font/ttf",
   ".txt": "text/plain; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".webp": "image/webp",
   ".xhtml": "application/xhtml+xml; charset=utf-8"
 };

@@ -97,7 +97,7 @@ Current fields:
 
 CLI group writes go through `group_files.js`. `node space group add` and `node space user create --groups ...` create the target writable `L1/<group>/` root when it is missing, then write membership to `group.yaml`. This also works for predefined runtime group ids such as `_admin`, whose group identity exists even before a writable `L1/_admin/group.yaml` file is created.
 
-When `CUSTOMWARE_PATH` is configured, run `node space set CUSTOMWARE_PATH <path>` before creating users or groups so those CLI writes land under the configured `CUSTOMWARE_PATH/L1` and `CUSTOMWARE_PATH/L2` roots.
+When `CUSTOMWARE_PATH` is configured, run `node space set CUSTOMWARE_PATH=<path>` before creating users or groups so those CLI writes land under the configured `CUSTOMWARE_PATH/L1` and `CUSTOMWARE_PATH/L2` roots.
 
 ## Override Order
 

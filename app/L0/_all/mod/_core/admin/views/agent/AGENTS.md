@@ -14,7 +14,7 @@ This surface owns:
 
 - `panel.html`: mounted admin agent UI
 - `store.js`: main state, send loop, compaction flow, dialog control, and persistence orchestration
-- `api.js`, `prompt.js`, `execution.js`, `attachments.js`, `llm-params.js`, `view.js`, and `huggingface.js`: admin runtime helpers
+- `api.js`, `prompt.js`, `execution.js`, `attachments.js`, `llm-params.js`, `view.js`, and `huggingface.js`: admin runtime helpers, with `api.js` owning the API-request preparation seam `prepareAdminAgentApiRequest`
 - `config.js` and `storage.js`: persisted settings and history contract
 - `system-prompt.md`, `compact-prompt.md`, and `compact-prompt-auto.md`: firmware prompt files
 - `skills.js`: admin skill catalog building and `space.admin.loadSkill(...)`
@@ -56,6 +56,7 @@ Prompt rules:
 - `compact-prompt.md` is used for user-invoked history compaction
 - `compact-prompt-auto.md` is used for automatic compaction during the loop
 - the runtime prompt also appends the current admin skill catalog built from `skills/*/SKILL.md`
+- the API-mode fetch branch must finalize its upstream request through `api.js` seam `_core/admin/views/agent/api.js/prepareAdminAgentApiRequest`; provider-specific headers or body rewrites belong in extension modules such as `_core/open_router`, not hard-coded in the admin runtime
 - `api.js` may fold consecutive prepared `user` or `assistant` payload messages into alternating transport turns with `\n\n` joins immediately before the fetch call, but that transport-only fold must not mutate stored history or prompt-history state
 - the firmware prompt documents `space.api.userSelfInfo()` as `{ username, fullName, groups, managedGroups }`, and admin checks should derive from `groups.includes("_admin")`
 

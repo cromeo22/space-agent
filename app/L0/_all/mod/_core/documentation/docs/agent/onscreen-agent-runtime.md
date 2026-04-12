@@ -7,6 +7,7 @@ This doc covers the floating routed overlay agent as a frontend runtime surface.
 - `app/L0/_all/mod/_core/onscreen_agent/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_agent/prompts/AGENTS.md`
 - `app/L0/_all/mod/_core/promptinclude/AGENTS.md`
+- `app/L0/_all/mod/_core/open_router/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_agent/store.js`
 - `app/L0/_all/mod/_core/onscreen_agent/llm.js`
 - `app/L0/_all/mod/_core/onscreen_agent/execution.js`
@@ -18,7 +19,7 @@ This doc covers the floating routed overlay agent as a frontend runtime surface.
 
 - the routed overlay adapter in the router overlay seam
 - the floating shell UI and compact bubble UI
-- chat history and overlay config persistence
+- chat history, overlay config persistence, and browser-stored overlay UI state
 - prompt assembly and prompt history previews
 - attachment handling
 - the execution loop and streamed execution cards
@@ -29,6 +30,7 @@ This doc covers the floating routed overlay agent as a frontend runtime surface.
 Current persisted files:
 
 - config: `~/conf/onscreen-agent.yaml`
+- browser UI state: `sessionStorage["space.onscreenAgent.uiState"]` with `localStorage["space.onscreenAgent.uiState"]` as fallback
 - history: `~/hist/onscreen-agent.json`
 
 Important config fields:
@@ -40,6 +42,9 @@ Important config fields:
 - `huggingface_model`
 - `huggingface_dtype`
 - optional `custom_system_prompt`
+
+Important browser UI state fields:
+
 - `agent_x`, `agent_y`
 - optional `hidden_edge`
 - optional `history_height`
@@ -62,7 +67,7 @@ The overlay publishes `space.onscreenAgent`.
 
 That namespace is the stable external entry point for:
 
-- showing or hiding the overlay, including revealing a persisted edge-hidden peeking pose before normal use resumes
+- showing or hiding the overlay, including revealing a browser-persisted edge-hidden peeking pose before normal use resumes
 - triggering prompt submission from outside the module
 
 The active chat surface also publishes the current prompt/history snapshot on `space.chat`.
@@ -84,6 +89,8 @@ The settings and prompt-history dialogs reuse the shared `_core/visual/forms/dia
 The settings dialog now has two provider tabs named `API` and `Local`. `API` keeps the OpenAI-compatible endpoint, model, and key fields. `Local` mounts the shared Hugging Face config sidebar in onscreen mode, so the overlay reads the same saved-model list and live WebGPU worker state as the routed Local LLM page and the admin chat. Opening the Local tab should refresh saved-model shortcuts without booting the worker; saving local settings persists the selected repo id and dtype, then starts background model preparation. When no local model is selected and saved models exist, the Local panel preselects the browser-wide last successfully loaded saved model from `_core/huggingface/manager.js`, falling back to the first saved entry if that last-used entry was discarded. When no local model is selected, no local model is loaded, and the shared saved-model list is empty, the Local panel prefills the Hugging Face model field with the same testing-page default: `onnx-community/gemma-4-E4B-it-ONNX`.
 
 The API-key composer blocker applies only to the default API-provider configuration with no API key. Local Hugging Face mode can send without an API key and falls back to loading the selected local model on the first message if background preparation has not finished.
+
+For remote API mode, `_core/onscreen_agent/api.js` now finalizes the upstream fetch request through extension seam `_core/onscreen_agent/api.js/prepareOnscreenAgentApiRequest`. Provider-specific request policy such as OpenRouter headers belongs in headless helper modules like `_core/open_router`, so prompt assembly in `llm.js` no longer hardcodes those headers.
 
 Local Hugging Face sends use the compact `LOCAL_ONSCREEN_AGENT_SYSTEM_PROMPT` profile from `llm.js` rather than the full firmware prompt plus skill catalog. The normal overlay history, transient context, execution loop, prompt inspection, and custom instructions still apply.
 

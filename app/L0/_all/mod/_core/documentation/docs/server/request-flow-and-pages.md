@@ -60,10 +60,13 @@ Important shell contracts:
 - `/` exposes `body/start` and then `_core/router` takes over
 - `/admin` exposes `page/admin/body/start`, injects `space-max-layer=0`, and then `_core/admin` takes over
 - `/login` and `/enter` cannot depend on authenticated `/mod/...` assets
+- every server-owned shell now declares the shared Space Agent favicon family and app manifest so standard browser tabs, install surfaces, and Apple touch shortcuts use the same helmet avatar
+- the shared page titles are `Space Agent`, `Admin Mode | Space Agent`, `Login | Space Agent`, and `Enter Space | Space Agent`
 - page shells can declare `SPACE_PROJECT_VERSION` for server-side version injection; `/enter` renders that value as centered white text below the launcher content
 - `/login` keeps the public run-it-yourself path inside a recovery-safe two-panel modal with `Native App` and `Own Server` choices, a privacy/security subtitle, and one short explanatory line per option; its app action links to `https://github.com/agent0ai/space-agent/releases/latest`, and server hosting links to the README `#host` section
 - server page shells must load runtime resources only from local page assets, inline SVG/CSS, or local `/mod/...` module assets; external URLs in page shells are navigation targets only
 - `/logout` is handled by the pages layer and clears the session before redirecting to `/login`
+- platform-standard root asset URLs such as `/favicon.ico`, `/apple-touch-icon.png`, and `/site.webmanifest` are page-layer aliases into `server/pages/res/`, so public and authenticated shells can share one favicon contract
 
 ## Launcher Behavior
 

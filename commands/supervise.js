@@ -3,12 +3,6 @@ import path from "node:path";
 import { loadSupervisorAuthEnv } from "./lib/supervisor/auth_keys.js";
 import { resolveUpdateSource, sanitizeRemoteUrl, shortRevision } from "./lib/supervisor/git_releases.js";
 import { SpaceSupervisor } from "./lib/supervisor/supervisor.js";
-import {
-  createRuntimeParams,
-  findParamSpec,
-  serializeRuntimeValue,
-  validateConfigValue
-} from "../server/lib/utils/runtime_params.js";
 
 const CHILD_HOST = "127.0.0.1";
 const CHILD_PORT = "0";
@@ -39,11 +33,6 @@ function parseIntervalMilliseconds(rawValue, optionName) {
   return Math.round(value * 1000);
 }
 
-async function setRuntimeParamOverride(projectRoot, overrides, rawName, rawValue) {
-  const spec = await findParamSpec(projectRoot, rawName);
-  overrides[spec.name] = validateConfigValue(spec, rawValue);
-}
-
 function readOptionValue(args, index, optionName) {
   const value = args[index + 1];
 
@@ -54,7 +43,32 @@ function readOptionValue(args, index, optionName) {
   return value;
 }
 
-async function parseSuperviseArgs(args, projectRoot) {
+function parseRuntimeAssignment(rawValue) {
+  const match = String(rawValue || "").match(PARAM_ASSIGNMENT_PATTERN);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    name: match[1],
+    value: match[2]
+  };
+}
+
+function findLastAssignmentValue(args, paramName) {
+  for (let index = args.length - 1; index >= 0; index -= 1) {
+    const assignment = parseRuntimeAssignment(args[index]);
+
+    if (assignment && assignment.name === paramName) {
+      return assignment.value;
+    }
+  }
+
+  return "";
+}
+
+function parseSuperviseArgs(args) {
   const options = {
     autoUpdateIntervalMs: DEFAULT_AUTO_UPDATE_INTERVAL_MS,
     branchName: "",
@@ -65,22 +79,10 @@ async function parseSuperviseArgs(args, projectRoot) {
     startupTimeoutMs: DEFAULT_STARTUP_TIMEOUT_MS,
     stateDir: ""
   };
-  const runtimeParamOverrides = {};
+  const serveArgs = [];
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-
-    if (arg === "--host") {
-      await setRuntimeParamOverride(projectRoot, runtimeParamOverrides, "HOST", readOptionValue(args, index, arg));
-      index += 1;
-      continue;
-    }
-
-    if (arg === "--port") {
-      await setRuntimeParamOverride(projectRoot, runtimeParamOverrides, "PORT", readOptionValue(args, index, arg));
-      index += 1;
-      continue;
-    }
 
     if (arg === "--branch") {
       options.branchName = String(readOptionValue(args, index, arg)).trim();
@@ -173,23 +175,12 @@ async function parseSuperviseArgs(args, projectRoot) {
       continue;
     }
 
-    const assignmentMatch = String(arg || "").match(PARAM_ASSIGNMENT_PATTERN);
-    if (assignmentMatch) {
-      await setRuntimeParamOverride(
-        projectRoot,
-        runtimeParamOverrides,
-        assignmentMatch[1],
-        assignmentMatch[2]
-      );
-      continue;
-    }
-
-    throw new Error(`Unknown supervise argument: ${arg}`);
+    serveArgs.push(arg);
   }
 
   return {
     options,
-    runtimeParamOverrides
+    serveArgs
   };
 }
 
@@ -197,35 +188,99 @@ function resolveProjectPath(projectRoot, value) {
   return path.resolve(projectRoot, String(value || ""));
 }
 
-function resolveRequiredCustomwarePath(projectRoot, runtimeParams) {
-  const configuredPath = String(runtimeParams.get("CUSTOMWARE_PATH", "") || "").trim();
+function resolveConfiguredValue(options = {}) {
+  const preferredValue = String(options.preferredValue || "").trim();
+
+  if (preferredValue) {
+    return preferredValue;
+  }
+
+  const assignmentValue = String(options.assignmentValue || "").trim();
+
+  if (assignmentValue) {
+    return assignmentValue;
+  }
+
+  const envValue = String(options.envValue || "").trim();
+
+  if (envValue) {
+    return envValue;
+  }
+
+  return String(options.defaultValue || "").trim();
+}
+
+function resolveRequiredCustomwarePath(projectRoot, serveArgs, env = process.env) {
+  const configuredPath = resolveConfiguredValue({
+    assignmentValue: findLastAssignmentValue(serveArgs, "CUSTOMWARE_PATH"),
+    envValue: env.CUSTOMWARE_PATH
+  });
 
   if (!configuredPath) {
     throw new Error(
-      "Supervise requires CUSTOMWARE_PATH. Set it with CUSTOMWARE_PATH=<path> or node space set CUSTOMWARE_PATH <path>."
+      "Supervise requires CUSTOMWARE_PATH. Set it with CUSTOMWARE_PATH=<path> or node space set CUSTOMWARE_PATH=<path>."
     );
   }
 
   return resolveProjectPath(projectRoot, configuredPath);
 }
 
-function buildServeArgs(runtimeParams, customwarePath) {
+function buildServeArgs(serveArgs, customwarePath) {
   const args = [];
+  let wroteCustomwarePath = false;
 
-  for (const entry of runtimeParams.list()) {
-    if (entry.value === undefined || entry.name === "HOST" || entry.name === "PORT") {
+  for (const arg of serveArgs) {
+    const assignment = parseRuntimeAssignment(arg);
+
+    if (!assignment) {
+      args.push(arg);
       continue;
     }
 
-    const value = entry.name === "CUSTOMWARE_PATH"
-      ? customwarePath
-      : serializeRuntimeValue(entry, entry.value);
+    if (assignment.name === "HOST" || assignment.name === "PORT") {
+      continue;
+    }
 
-    args.push(`${entry.name}=${value}`);
+    if (assignment.name === "CUSTOMWARE_PATH") {
+      if (!wroteCustomwarePath) {
+        args.push(`CUSTOMWARE_PATH=${customwarePath}`);
+        wroteCustomwarePath = true;
+      }
+      continue;
+    }
+
+    args.push(arg);
+  }
+
+  if (!wroteCustomwarePath) {
+    args.push(`CUSTOMWARE_PATH=${customwarePath}`);
   }
 
   args.push(`HOST=${CHILD_HOST}`, `PORT=${CHILD_PORT}`);
   return args;
+}
+
+function resolvePublicHost(options, serveArgs, env = process.env) {
+  return resolveConfiguredValue({
+    assignmentValue: findLastAssignmentValue(serveArgs, "HOST"),
+    envValue: env.HOST,
+    defaultValue: "0.0.0.0"
+  });
+}
+
+function resolvePublicPort(options, serveArgs, env = process.env) {
+  const rawPort = resolveConfiguredValue({
+    assignmentValue: findLastAssignmentValue(serveArgs, "PORT"),
+    envValue: env.PORT,
+    defaultValue: "3000"
+  });
+  const publicPort = Number(rawPort);
+
+  if (!Number.isFinite(publicPort) || publicPort < 0) {
+    throw new Error(`Invalid supervise port: ${rawPort}`);
+  }
+
+  return publicPort;
 }
 
 function attachShutdownHandlers(supervisor) {
@@ -275,21 +330,13 @@ export const help = {
   summary: "Run Space Agent behind a production-ready zero-downtime auto-update supervisor.",
   usage: [
     "node space supervise CUSTOMWARE_PATH=/srv/space/customware",
-    "node space supervise --host 0.0.0.0 --port 3000 CUSTOMWARE_PATH=/srv/space/customware",
+    "node space supervise HOST=0.0.0.0 PORT=3000 CUSTOMWARE_PATH=/srv/space/customware",
     "node space supervise --branch main --auto-update-interval 300 CUSTOMWARE_PATH=/srv/space/customware",
     "node space supervise --auto-update-interval 0 CUSTOMWARE_PATH=/srv/space/customware"
   ],
   description:
-    "Starts a production-ready public reverse-proxy supervisor, runs real space serve children on private loopback ports, periodically stages source updates in release directories when the auto-update interval is greater than zero, switches to a healthy replacement child, drains old streams, and restarts the active child if it crashes. CUSTOMWARE_PATH is required and is passed to children as an absolute path so every release shares the same writable L1/L2 state.",
+    "Starts a production-ready public reverse-proxy supervisor, runs real space serve children on private loopback ports, periodically stages source updates in release directories when the auto-update interval is greater than zero, and switches to a healthy replacement child. The supervisor only owns its own flags plus the public bind host and port; every other CLI argument is forwarded to space serve unchanged except that child HOST and PORT are forced to loopback and CUSTOMWARE_PATH is normalized to an absolute shared-state path.",
   options: [
-    {
-      flag: "--host <host>",
-      description: "Public supervisor bind host; alias for HOST=<host>."
-    },
-    {
-      flag: "--port <port>",
-      description: "Public supervisor bind port; alias for PORT=<port>."
-    },
     {
       flag: "--branch <branch>",
       description: "Git branch to watch for source updates; defaults to the current or remembered checkout branch."
@@ -324,20 +371,16 @@ export const help = {
     }
   ],
   examples: [
-    "node space set CUSTOMWARE_PATH /srv/space/customware",
-    "node space supervise --host 0.0.0.0 --port 3000",
+    "node space set CUSTOMWARE_PATH=/srv/space/customware",
+    "node space supervise HOST=0.0.0.0 PORT=3000",
     "node space supervise SINGLE_USER_APP=true --branch main",
     "node space supervise --auto-update-interval 0"
   ]
 };
 
 export async function execute(context) {
-  const { options, runtimeParamOverrides } = await parseSuperviseArgs(context.args, context.projectRoot);
-  const runtimeParams = await createRuntimeParams(context.projectRoot, {
-    env: context.originalEnv,
-    overrides: runtimeParamOverrides
-  });
-  const customwarePath = resolveRequiredCustomwarePath(context.projectRoot, runtimeParams);
+  const { options, serveArgs: rawServeArgs } = parseSuperviseArgs(context.args);
+  const customwarePath = resolveRequiredCustomwarePath(context.projectRoot, rawServeArgs, process.env);
   const stateDir = options.stateDir
     ? resolveProjectPath(context.projectRoot, options.stateDir)
     : path.join(customwarePath, ".space-supervisor");
@@ -347,7 +390,7 @@ export async function execute(context) {
     stateDir
   });
   const updateSource = await resolveSupervisorSource(options, context.projectRoot);
-  const serveArgs = buildServeArgs(runtimeParams, customwarePath);
+  const serveArgs = buildServeArgs(rawServeArgs, customwarePath);
   const supervisor = new SpaceSupervisor({
     autoUpdateIntervalMs: options.autoUpdateIntervalMs,
     branchName: updateSource.branchName,
@@ -358,8 +401,8 @@ export async function execute(context) {
     drainIdleMs: options.drainIdleMs,
     drainTimeoutMs: options.drainTimeoutMs,
     projectRoot: context.projectRoot,
-    publicHost: runtimeParams.get("HOST", "0.0.0.0"),
-    publicPort: Number(runtimeParams.get("PORT", 3000)),
+    publicHost: resolvePublicHost(options, rawServeArgs, process.env),
+    publicPort: resolvePublicPort(options, rawServeArgs, process.env),
     releasesDir,
     remoteUrl: updateSource.remoteUrl,
     restartBackoffMs: options.restartBackoffMs,
@@ -388,3 +431,13 @@ export async function execute(context) {
   await supervisor.start();
   return supervisor.waitForStop();
 }
+
+export const __test = {
+  buildServeArgs,
+  findLastAssignmentValue,
+  parseRuntimeAssignment,
+  parseSuperviseArgs,
+  resolvePublicHost,
+  resolvePublicPort,
+  resolveRequiredCustomwarePath
+};

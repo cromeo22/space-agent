@@ -128,24 +128,6 @@ function resolveHistoryCompactPromptConfig(mode) {
   };
 }
 
-function createHeaders(endpoint, apiKey) {
-  const headers = {
-    "Content-Type": "application/json"
-  };
-
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
-
-  if (endpoint.includes("openrouter.ai")) {
-    headers["HTTP-Referer"] = "https://space-agent.ai";
-    headers["X-OpenRouter-Title"] = "Space Agent";
-    headers["X-OpenRouter-Categories"] = "personal-agent,cloud-agent"
-  }
-
-  return headers;
-}
-
 function normalizeConversationMessage(message) {
   if (!["user", "assistant"].includes(message?.role)) {
     return null;
@@ -815,7 +797,6 @@ export const prepareOnscreenAgentCompletionRequest = globalThis.space.extend(
       : [];
 
     return {
-      headers: createHeaders(normalizedSettings.apiEndpoint || "", String(normalizedSettings.apiKey || "").trim()),
       messages: requestMessages,
       promptInput: effectivePromptInput,
       requestBody: createRequestBody(normalizedSettings, effectivePromptInput),

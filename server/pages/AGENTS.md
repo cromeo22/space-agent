@@ -23,6 +23,7 @@ Current public shell assets:
 - `res/space-backdrop.js`
 - `res/enter-guard.js`
 - login-shell image assets under `res/`
+- shared favicon assets and `res/site.webmanifest`
 
 ## Shell Contracts
 
@@ -31,6 +32,7 @@ Current public shell assets:
 - loads shared framework CSS and `/mod/_core/framework/js/initFw.js`
 - when the current request already has launcher access, receives a page-shell guard before `/mod/...` assets so a new browser-opened tab or window is redirected to `/enter?next=<current-url>` before customware loads; framework-created same-origin `_blank` opens may pre-grant the same tab-access marker before loading this shell
 - receives injected `meta[name="space-config"]` tags for any `frontend_exposed` runtime parameters
+- declares the shared Space Agent favicon set and app manifest metadata
 - keeps the body minimal and exposes exactly the `body/start` extension anchor
 
 `admin.html`:
@@ -39,6 +41,7 @@ Current public shell assets:
 - when the current request already has launcher access, receives the same page-shell guard before `/mod/...` assets so a new browser-opened tab or window is redirected to `/enter?next=<current-url>` before admin shell assets load; framework-created same-origin `_blank` opens may pre-grant the same tab-access marker before loading this shell
 - declares `meta[name="space-max-layer"]` with content `0`
 - receives the same injected `meta[name="space-config"]` tags for `frontend_exposed` runtime parameters
+- declares the shared Space Agent favicon set and the `Admin Mode | Space Agent` document title
 - keeps the body minimal and exposes exactly the `page/admin/body/start` extension anchor
 
 `login.html`:
@@ -46,6 +49,7 @@ Current public shell assets:
 - is public and must not depend on authenticated `/mod/...` assets
 - owns the login flow, guest creation flow, and pre-auth layout
 - reads injected `meta[name="space-config"]` tags directly so guest-login UI can follow backend runtime parameters without authenticated module imports
+- declares the shared Space Agent favicon set and the `Login | Space Agent` document title
 - grants same-tab launcher access in `sessionStorage` after successful password sign-in so the tab that just authenticated can land on `/` while fresh tabs still route through `/enter`
 - renders the guest-account removal warning with yellow warning treatment and a recovery-safe inline Google Material Symbols warning icon, without depending on authenticated icon fonts
 - keeps the self-host call-to-action visually separated from the sign-in form even when guest account creation is disabled and the guest-only block is hidden
@@ -60,6 +64,7 @@ Current public shell assets:
 - must not depend on authenticated `/mod/...` assets
 - is served for launcher-eligible sessions; in multi-user mode, unauthenticated requests are redirected to `/login` before this shell loads
 - owns the firmware-backed launcher UI that links to `/` and `/admin`, labeled as Enter Space and Admin Mode
+- declares the shared Space Agent favicon set and the `Enter Space | Space Agent` document title
 - renders the injected instance version as centered white floating text below the launcher content, using the page-shell `SPACE_PROJECT_VERSION` placeholder
 - accepts an optional `next` query param, grants per-tab launcher access through `sessionStorage`, and routes the Enter or Admin buttons back to the original target when appropriate
 - mirrors the login-shell intro layout, floating astronaut, and public backdrop while replacing the right-side form card with direct launcher actions
@@ -75,6 +80,7 @@ Rules:
 - keep the mirrored public backdrop aligned with `_core/visual`
 - if the shared backdrop visuals or runtime behavior change, review and update these mirrored files in the same session
 - keep public-shell assets under `server/pages/res/` instead of embedding large data blobs into page HTML
+- keep the shared favicon asset family in `server/pages/res/` and derive it from the onscreen-agent assistant helmet avatar so browser tabs, installs, and Apple touch shortcuts stay visually aligned
 - server page shells must not load remote runtime resources; scripts, styles, fonts, images, icons, and recovery visuals must be local files or inline SVG/CSS so `/login`, `/enter`, `/`, and `/admin` can load without internet access
 - external `https://...` URLs in page shells are allowed only as explicit user navigation targets, never as required runtime assets
 

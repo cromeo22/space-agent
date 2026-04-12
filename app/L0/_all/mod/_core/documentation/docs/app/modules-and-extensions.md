@@ -11,6 +11,7 @@ This doc covers how browser code is delivered and composed.
 - `app/L0/_all/mod/_core/file_explorer/AGENTS.md`
 - `app/L0/_all/mod/_core/framework/AGENTS.md`
 - `app/L0/_all/mod/_core/login_hooks/AGENTS.md`
+- `app/L0/_all/mod/_core/open_router/AGENTS.md`
 - `app/L0/_all/mod/_core/onscreen_menu/AGENTS.md`
 - `app/L0/_all/mod/_core/promptinclude/AGENTS.md`
 - `app/L0/_all/mod/_core/router/AGENTS.md`
@@ -97,6 +98,7 @@ Rules:
 - feature-specific prompt or execution behavior for the onscreen agent should be supplied from the owning module through `_core/onscreen_agent/...` extension seams, not hardcoded into `_core/onscreen_agent`
 - headless helper modules are valid first-party modules too: `_core/promptinclude` has no route or UI, but it extends `_core/onscreen_agent/llm.js/buildOnscreenAgentSystemPromptSections` and `_core/onscreen_agent/llm.js/buildOnscreenAgentTransientSections` to auto-inject readable `**/*.system.include.md` files into the overlay system prompt and readable `**/*.transient.include.md` files into the overlay transient context
 - `_core/login_hooks` is another headless helper module: it extends `_core/framework/initializer.js/initialize/end`, checks for the client-owned `~/meta/login_hooks.json` marker, dispatches `_core/login_hooks/first_login` once when that marker is absent, and dispatches `_core/login_hooks/any_login` when the authenticated shell was reached directly from `/login`
+- `_core/open_router` is a headless provider-policy module: it extends `_core/onscreen_agent/api.js/prepareOnscreenAgentApiRequest/end` and `_core/admin/views/agent/api.js/prepareAdminAgentApiRequest/end`, detects when API mode targets an OpenRouter upstream endpoint, and applies the OpenRouter-specific request headers there instead of hardcoding them inside the chat runtimes
 
 Uncached HTML `<x-extension>` lookups are grouped before they hit `/api/extensions_load`:
 

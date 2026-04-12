@@ -995,7 +995,7 @@
 
   to {
     opacity: 0.96;
-    transform: translate3d(0, 8px, 0) scale(0.982);
+    transform: translate3d(0, 0, 0) scale(1);
   }
 }
 

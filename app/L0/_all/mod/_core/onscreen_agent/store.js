@@ -1965,12 +1965,14 @@ const model = {
 
   async persistConfig() {
     try {
-      await storage.saveOnscreenAgentConfig({
+      storage.saveOnscreenAgentUiState({
         agentX: this.agentX,
         agentY: this.agentY,
         displayMode: this.displayMode,
         hiddenEdge: this.hiddenEdge,
-        historyHeight: this.historyHeight,
+        historyHeight: this.historyHeight
+      });
+      await storage.saveOnscreenAgentConfig({
         settings: this.settings,
         systemPrompt: this.systemPrompt
       });

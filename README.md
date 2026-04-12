@@ -140,13 +140,13 @@ cd space-agent
 npm install
 
 # keep users, groups, and personal spaces outside the source checkout
-node space set CUSTOMWARE_PATH /srv/space-agent/customware
+node space set CUSTOMWARE_PATH=/srv/space-agent/customware
 
 # create administrator user
 node space user create admin --password "change-me-now" --full-name "Admin" --groups _admin
 
 # production-ready zero-downtime server with auto-update enabled by default
-node space supervise --host 0.0.0.0 --port 3000
+node space supervise HOST=0.0.0.0 PORT=3000
 ```
 
 Open:
@@ -191,7 +191,7 @@ node space serve SINGLE_USER_APP=true
 | `node space serve` | Start Space Agent. |
 | `node space supervise` | Run the production-ready zero-downtime server with auto-update and crash restart. |
 | `node space get` | Show saved settings. |
-| `node space set <param> <value>` | Save a setting in `.env`. |
+| `node space set KEY=VALUE [KEY=VALUE ...]` | Save one or more settings in `.env`. |
 | `node space user create` | Create a user, with optional `--groups`. |
 | `node space user password` | Reset a user's password and clear sessions. |
 | `node space group create` | Create an `L1/<group>` group. |
@@ -199,7 +199,7 @@ node space serve SINGLE_USER_APP=true
 | `node space update` | Update a source checkout from Git. |
 | `node space help` | Show command help discovered from command modules. |
 
-Runtime settings live in [`commands/params.yaml`](./commands/params.yaml). For `CUSTOMWARE_PATH`, save the value with `node space set` before creating users or groups so every command uses the same writable data location.
+Runtime settings live in [`commands/params.yaml`](./commands/params.yaml). For `CUSTOMWARE_PATH`, save the value with `node space set CUSTOMWARE_PATH=<path>` before creating users or groups so every command uses the same writable data location.
 
 ## Documentation
 

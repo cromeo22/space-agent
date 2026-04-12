@@ -17,28 +17,6 @@ async function parseServeArgs(args, projectRoot) {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
-    if (arg === "--host") {
-      const hostValue = args[index + 1];
-      if (hostValue === undefined) {
-        throw new Error("Serve --host requires a value.");
-      }
-
-      await setRuntimeParamOverride(projectRoot, runtimeParamOverrides, "HOST", hostValue);
-      index += 1;
-      continue;
-    }
-
-    if (arg === "--port") {
-      const portValue = args[index + 1];
-      if (portValue === undefined) {
-        throw new Error("Serve --port requires a value.");
-      }
-
-      await setRuntimeParamOverride(projectRoot, runtimeParamOverrides, "PORT", portValue);
-      index += 1;
-      continue;
-    }
-
     const assignmentMatch = String(arg || "").match(PARAM_ASSIGNMENT_PATTERN);
     if (assignmentMatch) {
       await setRuntimeParamOverride(
@@ -61,27 +39,18 @@ export const help = {
   summary: "Start the local Space Agent server.",
   usage: [
     "node space serve",
-    "node space serve --host 0.0.0.0 --port 3000",
+    "node space serve HOST=0.0.0.0 PORT=3000",
     "node space serve PORT=0",
     "node space serve PORT=3100 WORKERS=8 ALLOW_GUEST_USERS=false"
   ],
   description:
-    "Starts the local Node server that serves the browser app and proxies fetch requests. Runtime parameters may be overridden at launch with PARAM=VALUE arguments; launch arguments win over stored .env parameters, which win over process environment variables. Use node space set CUSTOMWARE_PATH <path> before creating users or groups when writable state should live outside the source checkout. Set WORKERS>1 to start a clustered HTTP worker pool with one authoritative primary process for shared filesystem and auth state.",
-  options: [
-    {
-      flag: "--host <host>",
-      description: "Alias for HOST=<host>."
-    },
-    {
-      flag: "--port <port>",
-      description: "Alias for PORT=<port>."
-    }
-  ],
+    "Starts the local Node server that serves the browser app and proxies fetch requests. Runtime parameters may be overridden at launch with PARAM=VALUE arguments; launch arguments win over stored .env parameters, which win over process environment variables. Use node space set CUSTOMWARE_PATH=<path> before creating users or groups when writable state should live outside the source checkout. Set WORKERS>1 to start a clustered HTTP worker pool with one authoritative primary process for shared filesystem and auth state.",
+  options: [],
   examples: [
     "node space serve",
     "node space serve SINGLE_USER_APP=true",
     "node space serve WORKERS=8",
-    "node space set CUSTOMWARE_PATH /srv/space/customware",
+    "node space set CUSTOMWARE_PATH=/srv/space/customware",
     "node space serve"
   ]
 };

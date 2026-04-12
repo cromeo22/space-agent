@@ -51,6 +51,7 @@ Important behaviors:
 Important runtime endpoints:
 
 - `extensions_load`
+- `debug_path_index`
 - `password_generate`
 - `user_self_info`
 
@@ -62,6 +63,13 @@ Important runtime endpoints:
 - receives grouped lookup batches from the frontend; the batching policy itself lives in the frontend loader, not in the endpoint contract
 - first-party HTML anchors and JS hooks use it for `ext/html/...` and `ext/js/...`
 - first-party page indexing also uses it to enumerate `ext/pages/*.yaml` manifests while still honoring readable-layer permissions and same-path overrides
+
+`debug_path_index`:
+
+- is authenticated and intended for clustered-runtime verification
+- returns filtered local `path_index` entries, the local index size, and a stable hash of the returned entry set
+- accepts exact `path` or `paths` plus directory `prefix` or `prefixes`
+- is meant for tests and temporary diagnostics, not for general frontend workflows
 
 `user_self_info`:
 

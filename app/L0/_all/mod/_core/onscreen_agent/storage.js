@@ -39,6 +39,16 @@ function createDefaultConfig() {
   };
 }
 
+function createDefaultUiState() {
+  return {
+    agentX: null,
+    agentY: null,
+    hiddenEdge: "",
+    historyHeight: null,
+    displayMode: DISPLAY_MODE_COMPACT
+  };
+}
+
 function getRuntime() {
   const runtime = globalThis.space;
 
@@ -124,11 +134,31 @@ function normalizeStoredConfig(parsedConfig) {
   };
 }
 
-function buildStoredConfigPayload({ settings, systemPrompt, agentX, agentY, hiddenEdge, historyHeight, displayMode }) {
+function normalizeStoredUiState(parsedState) {
+  const storedState = parsedState && typeof parsedState === "object" ? parsedState : {};
+  const rawX = storedState.agent_x ?? storedState.agentX;
+  const rawY = storedState.agent_y ?? storedState.agentY;
+  const rawHiddenEdge = storedState.hidden_edge ?? storedState.hiddenEdge;
+  const rawHistoryHeight = storedState.history_height ?? storedState.historyHeight;
+  const storedDisplayMode = normalizeDisplayMode(storedState.display_mode ?? storedState.displayMode);
+  const legacyDisplayMode =
+    storedState.collapsed === true
+      ? DISPLAY_MODE_COMPACT
+      : storedState.collapsed === false
+        ? DISPLAY_MODE_FULL
+        : "";
+
+  return {
+    agentX: normalizeStoredCoordinate(rawX),
+    agentY: normalizeStoredCoordinate(rawY),
+    hiddenEdge: config.normalizeOnscreenAgentHiddenEdge(rawHiddenEdge),
+    historyHeight: config.normalizeOnscreenAgentHistoryHeight(rawHistoryHeight),
+    displayMode: storedDisplayMode || legacyDisplayMode || DISPLAY_MODE_COMPACT
+  };
+}
+
+function buildStoredConfigPayload({ settings, systemPrompt }) {
   const normalizedSystemPrompt = typeof systemPrompt === "string" ? systemPrompt.trim() : "";
-  const normalizedDisplayMode = normalizeDisplayMode(displayMode) || DISPLAY_MODE_COMPACT;
-  const normalizedHiddenEdge = config.normalizeOnscreenAgentHiddenEdge(hiddenEdge);
-  const normalizedHistoryHeight = config.normalizeOnscreenAgentHistoryHeight(historyHeight);
   const payload = {
     api_endpoint: String(settings?.apiEndpoint || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.apiEndpoint || "").trim(),
     api_key: String(settings?.apiKey || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.apiKey || "").trim(),
@@ -138,7 +168,21 @@ function buildStoredConfigPayload({ settings, systemPrompt, agentX, agentY, hidd
     llm_provider: config.normalizeOnscreenAgentLlmProvider(settings?.provider),
     max_tokens: config.normalizeOnscreenAgentMaxTokens(settings?.maxTokens),
     model: String(settings?.model || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.model || "").trim(),
-    params: String(settings?.paramsText || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.paramsText || "").trim(),
+    params: String(settings?.paramsText || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.paramsText || "").trim()
+  };
+
+  if (normalizedSystemPrompt) {
+    payload.custom_system_prompt = normalizedSystemPrompt;
+  }
+
+  return payload;
+}
+
+function buildStoredUiStatePayload({ agentX, agentY, hiddenEdge, historyHeight, displayMode }) {
+  const normalizedDisplayMode = normalizeDisplayMode(displayMode) || DISPLAY_MODE_COMPACT;
+  const normalizedHiddenEdge = config.normalizeOnscreenAgentHiddenEdge(hiddenEdge);
+  const normalizedHistoryHeight = config.normalizeOnscreenAgentHistoryHeight(historyHeight);
+  const payload = {
     display_mode: normalizedDisplayMode,
     collapsed: normalizedDisplayMode === DISPLAY_MODE_COMPACT
   };
@@ -159,11 +203,42 @@ function buildStoredConfigPayload({ settings, systemPrompt, agentX, agentY, hidd
     payload.history_height = normalizedHistoryHeight;
   }
 
-  if (normalizedSystemPrompt) {
-    payload.custom_system_prompt = normalizedSystemPrompt;
-  }
-
   return payload;
+}
+
+function getStorageArea(storageName) {
+  const storageArea = globalThis[storageName];
+  return storageArea && typeof storageArea.getItem === "function" && typeof storageArea.setItem === "function"
+    ? storageArea
+    : null;
+}
+
+function loadUiStateFromStorageArea(storageName) {
+  try {
+    const storageArea = getStorageArea(storageName);
+    const rawValue = storageArea?.getItem(config.ONSCREEN_AGENT_UI_STATE_STORAGE_KEY);
+    const parsedValue = rawValue ? JSON.parse(rawValue) : null;
+    return parsedValue && typeof parsedValue === "object" ? normalizeStoredUiState(parsedValue) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistUiStateToStorageArea(storageName, nextState) {
+  try {
+    const storageArea = getStorageArea(storageName);
+
+    if (!storageArea) {
+      return;
+    }
+
+    storageArea.setItem(
+      config.ONSCREEN_AGENT_UI_STATE_STORAGE_KEY,
+      JSON.stringify(buildStoredUiStatePayload(nextState))
+    );
+  } catch {
+    // Ignore browser storage failures and keep the overlay usable.
+  }
 }
 
 export async function loadOnscreenAgentConfig() {
@@ -171,10 +246,28 @@ export async function loadOnscreenAgentConfig() {
 
   try {
     const result = await runtime.api.fileRead(config.ONSCREEN_AGENT_CONFIG_PATH);
-    return normalizeStoredConfig(runtime.utils.yaml.parse(String(result?.content || "")));
+    const normalizedConfig = normalizeStoredConfig(runtime.utils.yaml.parse(String(result?.content || "")));
+    const storedUiState =
+      loadUiStateFromStorageArea("sessionStorage") ||
+      loadUiStateFromStorageArea("localStorage") ||
+      normalizeStoredUiState(normalizedConfig);
+
+    return {
+      settings: normalizedConfig.settings,
+      systemPrompt: normalizedConfig.systemPrompt,
+      ...storedUiState
+    };
   } catch (error) {
     if (isMissingFileError(error)) {
-      return createDefaultConfig();
+      const storedUiState =
+        loadUiStateFromStorageArea("sessionStorage") ||
+        loadUiStateFromStorageArea("localStorage") ||
+        createDefaultUiState();
+
+      return {
+        ...createDefaultConfig(),
+        ...storedUiState
+      };
     }
 
     throw new Error(`Unable to load onscreen agent config: ${error.message}`);
@@ -190,6 +283,11 @@ export async function saveOnscreenAgentConfig(nextConfig) {
   } catch (error) {
     throw new Error(`Unable to save onscreen agent config: ${error.message}`);
   }
+}
+
+export function saveOnscreenAgentUiState(nextState) {
+  persistUiStateToStorageArea("sessionStorage", nextState);
+  persistUiStateToStorageArea("localStorage", nextState);
 }
 
 export async function loadOnscreenAgentHistory() {

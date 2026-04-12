@@ -214,6 +214,60 @@ function normalizeCompletionMessagesForLocal(messages) {
     .filter(Boolean);
 }
 
+function createApiRequestHeaders(apiKey) {
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  return headers;
+}
+
+function createApiRequestBody(settings, preparedRequest) {
+  if (preparedRequest?.requestBody && typeof preparedRequest.requestBody === "object") {
+    return {
+      ...preparedRequest.requestBody
+    };
+  }
+
+  const requestMessages = Array.isArray(preparedRequest?.messages) ? preparedRequest.messages : [];
+
+  return {
+    ...llmParams.parseOnscreenAgentParamsText(settings?.paramsText || ""),
+    model: settings?.model || config.DEFAULT_ONSCREEN_AGENT_SETTINGS.model,
+    stream: true,
+    messages: requestMessages
+  };
+}
+
+function buildFetchRequestInit(apiRequest, signal) {
+  const requestInit =
+    apiRequest?.requestInit && typeof apiRequest.requestInit === "object"
+      ? { ...apiRequest.requestInit }
+      : {};
+  const headers =
+    apiRequest?.headers && typeof apiRequest.headers === "object"
+      ? { ...apiRequest.headers }
+      : {};
+
+  requestInit.method = typeof apiRequest?.method === "string" && apiRequest.method.trim() ? apiRequest.method : "POST";
+  requestInit.headers = headers;
+  requestInit.signal = signal;
+
+  if (!("body" in requestInit)) {
+    if (apiRequest && "body" in apiRequest) {
+      requestInit.body = apiRequest.body;
+    } else if (apiRequest?.requestBody !== undefined) {
+      requestInit.body = JSON.stringify(apiRequest.requestBody);
+    }
+  }
+
+  return requestInit;
+}
+
 export class OnscreenAgentLlmClient {
   constructor(options = {}) {
     this.settings =
@@ -265,9 +319,22 @@ export class OnscreenAgentApiLlmClient extends OnscreenAgentLlmClient {
     }
   }
 
+  async resolveApiRequest(options = {}) {
+    const preparedRequest = await this.resolvePreparedRequest(options);
+    const effectiveSettings =
+      preparedRequest?.settings && typeof preparedRequest.settings === "object"
+        ? preparedRequest.settings
+        : this.settings;
+
+    return prepareOnscreenAgentApiRequest({
+      preparedRequest,
+      settings: effectiveSettings
+    });
+  }
+
   async streamCompletion(options = {}) {
     const onDelta = typeof options.onDelta === "function" ? options.onDelta : () => {};
-    const effectiveRequest = await this.resolvePreparedRequest(options);
+    const effectiveRequest = await this.resolveApiRequest(options);
     const effectiveSettings =
       effectiveRequest?.settings && typeof effectiveRequest.settings === "object"
         ? effectiveRequest.settings
@@ -276,10 +343,7 @@ export class OnscreenAgentApiLlmClient extends OnscreenAgentLlmClient {
     this.validateSettings(effectiveSettings);
 
     const response = await fetch(effectiveRequest.requestUrl, {
-      method: "POST",
-      headers: effectiveRequest.headers,
-      body: JSON.stringify(effectiveRequest.requestBody),
-      signal: options.signal
+      ...buildFetchRequestInit(effectiveRequest, options.signal)
     });
 
     if (!response.ok) {
@@ -347,6 +411,41 @@ export class OnscreenAgentLocalLlmClient extends OnscreenAgentLlmClient {
     return result.responseMeta;
   }
 }
+
+export const prepareOnscreenAgentApiRequest = globalThis.space.extend(
+  import.meta,
+  async function prepareOnscreenAgentApiRequest({ preparedRequest, settings } = {}) {
+    const effectivePreparedRequest =
+      preparedRequest && typeof preparedRequest === "object" ? preparedRequest : {};
+    const effectiveSettings =
+      settings && typeof settings === "object"
+        ? settings
+        : effectivePreparedRequest?.settings && typeof effectivePreparedRequest.settings === "object"
+          ? effectivePreparedRequest.settings
+          : config.DEFAULT_ONSCREEN_AGENT_SETTINGS;
+    const apiEndpoint = String(effectiveSettings?.apiEndpoint || "").trim();
+
+    return {
+      apiEndpoint,
+      headers: createApiRequestHeaders(String(effectiveSettings?.apiKey || "").trim()),
+      messages: Array.isArray(effectivePreparedRequest?.messages) ? effectivePreparedRequest.messages : [],
+      method: "POST",
+      preparedRequest: effectivePreparedRequest,
+      promptInput:
+        effectivePreparedRequest?.promptInput && typeof effectivePreparedRequest.promptInput === "object"
+          ? effectivePreparedRequest.promptInput
+          : null,
+      requestBody: createApiRequestBody(effectiveSettings, effectivePreparedRequest),
+      requestUrl:
+        typeof effectivePreparedRequest?.requestUrl === "string" && effectivePreparedRequest.requestUrl.trim()
+          ? effectivePreparedRequest.requestUrl
+          : apiEndpoint,
+      settings: effectiveSettings,
+      systemPrompt:
+        typeof effectivePreparedRequest?.systemPrompt === "string" ? effectivePreparedRequest.systemPrompt : ""
+    };
+  }
+);
 
 export function createOnscreenAgentLlmClient(settings = config.DEFAULT_ONSCREEN_AGENT_SETTINGS) {
   const provider = config.normalizeOnscreenAgentLlmProvider(settings?.provider);

@@ -93,12 +93,14 @@ Current rules:
 Runtime and identity endpoints:
 
 - `extensions_load`
+- `debug_path_index`
 - `password_generate`
 - `user_self_info`
 
 Important notes:
 
 - `extensions_load` resolves module-owned `ext/...` request paths through the shared layered override system and supports grouped request batches
+- `debug_path_index` is an authenticated debugging endpoint for clustered-runtime verification; it returns filtered local `path_index` entries plus a stable hash so tests can compare worker replicas without walking the filesystem directly
 - frontend HTML anchors and JS hooks resolve through `ext/html/...` and `ext/js/...` request paths respectively
 - frontend modules may also enumerate other extension-resolved metadata assets through this endpoint when those files should honor readable-layer permissions plus same-path layered overrides; the current first-party example is `ext/pages/*.yaml`
 - `user_self_info` returns the authenticated user's derived identity only: `{ username, fullName, groups, managedGroups }`

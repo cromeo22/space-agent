@@ -25,12 +25,15 @@ Stable behavior:
 
 - the supervisor process binds the public `HOST` and `PORT`
 - child servers always receive `HOST=127.0.0.1` and `PORT=0`
-- all other resolved runtime params are passed to child `space serve` processes as launch arguments
+- all non-supervisor CLI arguments are forwarded to child `space serve` processes as opaque launch arguments
+- public bind `HOST` and `PORT` come from the same `PARAM=VALUE` runtime-param form as `serve`, not command-specific flag aliases
 - `CUSTOMWARE_PATH` is required and is normalized to an absolute path before being passed to children
 - supervisor state defaults to `CUSTOMWARE_PATH/.space-supervisor`
 - staged releases live under the supervisor state directory, not in the live source checkout
 - auto-update polling uses `--auto-update-interval`, defaults to `300` seconds, and is disabled when the interval is less than or equal to `0`
 - auth keys are either inherited from `SPACE_AUTH_PASSWORD_SEAL_KEY` and `SPACE_AUTH_SESSION_HMAC_KEY` or generated once under supervisor state and injected into every child
+- `supervise` should stay independent from server runtime-param parsing so new `space serve` flags can flow through without a supervisor-specific change
+- GitHub update checks and staged release clones use the same `SPACE_GITHUB_TOKEN` auth rule as `node space update`, and send no GitHub auth header when that variable is unset
 - when the auto-update interval is greater than `0`, updates are staged by cloning the watched branch, checking out the exact remote revision, running `npm install --omit=optional`, then starting and health-checking the replacement child
 - update attempts never overlap; the next interval is scheduled only after the current attempt finishes or fails
 - Git remote checks, release staging commands, dependency installs, and child readiness waits are bounded so one stalled update attempt cannot block future intervals forever

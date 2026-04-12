@@ -139,13 +139,11 @@ Purpose:
 Current launch overrides:
 
 - `PARAM=VALUE` for any parameter defined in `commands/params.yaml`
-- `--host <host>`
-- `--port <port>`
 
 Current usage:
 
 - `node space serve`
-- `node space serve --host 0.0.0.0 --port 3000`
+- `node space serve HOST=0.0.0.0 PORT=3000`
 - `node space serve PORT=0`
 - `node space serve WORKERS=4`
 - `node space serve PORT=3100 ALLOW_GUEST_USERS=false`
@@ -153,11 +151,11 @@ Current usage:
 Guidance:
 
 - keep `serve` focused on process startup and bootstrap overrides
-- keep `--host` and `--port` as aliases of the shared `HOST` and `PORT` runtime parameters
+- keep `HOST=` and `PORT=` consistent with the rest of the runtime-param system instead of adding command-specific host or port flag aliases
 - keep `PORT=0` available as the explicit OS-assigned free-port mode used by the desktop host and other ephemeral local-runtime flows
 - keep `WORKERS` wired through the shared runtime-param schema instead of adding a separate cluster-only flag; the runtime uses one authoritative primary state host plus parallel HTTP workers
 - print the shared Git-derived project version on startup through `server/lib/utils/project_version.js`, while preserving the existing `space server listening at ...` line as a separate line for supervisor readiness parsing
-- prefer `node space set CUSTOMWARE_PATH <path>` before user or group creation when documenting persistent writable-root setup, because launch-only `CUSTOMWARE_PATH=...` overrides affect only that `serve` process
+- prefer `node space set CUSTOMWARE_PATH=<path>` before user or group creation when documenting persistent writable-root setup, because launch-only `CUSTOMWARE_PATH=...` overrides affect only that `serve` process
 - do not move application behavior into the command when it belongs in `server/`
 
 ### `supervise`
@@ -173,8 +171,6 @@ Purpose:
 Current launch overrides:
 
 - `PARAM=VALUE` for any parameter defined in `commands/params.yaml`
-- `--host <host>`
-- `--port <port>`
 
 Current supervisor options:
 
@@ -190,7 +186,7 @@ Current supervisor options:
 Current usage:
 
 - `node space supervise CUSTOMWARE_PATH=/srv/space/customware`
-- `node space supervise --host 0.0.0.0 --port 3000 CUSTOMWARE_PATH=/srv/space/customware`
+- `node space supervise HOST=0.0.0.0 PORT=3000 CUSTOMWARE_PATH=/srv/space/customware`
 - `node space supervise WORKERS=8 CUSTOMWARE_PATH=/srv/space/customware`
 - `node space supervise --branch main --auto-update-interval 300 CUSTOMWARE_PATH=/srv/space/customware`
 - `node space supervise --auto-update-interval 0 CUSTOMWARE_PATH=/srv/space/customware`
@@ -200,7 +196,7 @@ Guidance:
 - keep `supervise` command-owned and do not add server hooks for supervisor lifecycle
 - keep auto-update polling enabled by default for production supervised source checkouts, while preserving `--auto-update-interval 0` for crash-restart-only supervision
 - keep the supervisor public `HOST` and `PORT` separate from child `space serve` ports; children must run on private loopback `PORT=0`
-- pass all resolved runtime params other than public `HOST` and `PORT` to child `serve` processes
+- keep child `space serve` launch args opaque and passthrough; `supervise` should only consume supervisor flags, normalize `CUSTOMWARE_PATH`, and replace child `HOST` and `PORT`
 - normalize `CUSTOMWARE_PATH` to an absolute path before passing it to children so every release shares the same writable `L1` and `L2` roots
 - keep release staging out of the live source checkout to avoid mixed old-code/new-asset windows
 - keep update attempts non-overlapping and bounded so a stalled Git, install, or child-readiness step cannot block future intervals forever
@@ -257,17 +253,19 @@ Purpose:
 
 Current usage:
 
-- `node space set <param> <value>`
+- `node space set KEY=VALUE [KEY=VALUE ...]`
 
 Behavior summary:
 
 - parameter names are defined by `commands/params.yaml`
+- `set` accepts one or more explicit `KEY=VALUE` assignments
 - `set` validates the value against the parameter's `type` and `allowed` rules before writing `.env`
-- `set` updates only the target key and preserves unrelated `.env` entries
+- `set` updates only the assigned keys and preserves unrelated `.env` entries
 
 Guidance:
 
 - keep `set` limited to explicit parameter writes; do not let it mutate unrelated runtime state
+- keep the assignment form aligned with `serve` and `supervise` so runtime params use one consistent CLI shape
 - if server config validation rules change, update both the command logic and `commands/params.yaml`
 
 ### `version`
@@ -306,6 +304,7 @@ Current usage:
 Behavior summary:
 
 - before fetching, it pins `origin` to `https://github.com/agent0ai/space-agent.git` and sets the normal branch fetch refspec for that remote
+- GitHub fetches use `SPACE_GITHUB_TOKEN` when that environment variable is set, and send no GitHub auth header when it is absent
 - with no target, it fast-forwards the current or recoverable branch from `origin`
 - with `--branch <branch>` or a branch positional target, it reattaches and updates that branch
 - with a tag or commit target, it moves the current or recovered branch to that exact revision when possible, otherwise it may fall back to detached HEAD
@@ -313,6 +312,7 @@ Behavior summary:
 Guidance:
 
 - keep update logic source-checkout specific
+- keep GitHub auth shared between `update` and supervised release staging so one `SPACE_GITHUB_TOKEN` path covers both
 - prefer explicit revision handling over clever inference
 - surface destructive or branch-moving behavior clearly in help text
 
@@ -351,7 +351,7 @@ Current behavior:
 - `password` rewrites the verifier and clears active sessions
 - `--full-name` sets `full_name` in `user.yaml`; if omitted it defaults to the user id
 - `--force` replaces the full user directory during create
-- when `CUSTOMWARE_PATH` is configured with `node space set CUSTOMWARE_PATH <path>` or process env, these logical `L2/...` writes land under `CUSTOMWARE_PATH/L2/...` and `--groups` writes land under `CUSTOMWARE_PATH/L1/...`
+- when `CUSTOMWARE_PATH` is configured with `node space set CUSTOMWARE_PATH=<path>` or process env, these logical `L2/...` writes land under `CUSTOMWARE_PATH/L2/...` and `--groups` writes land under `CUSTOMWARE_PATH/L1/...`
 
 Examples:
 
@@ -396,7 +396,7 @@ Current behavior:
 - `--manager` switches the target list from included members to managing members
 - user targets affect `included_users` or `managing_users`
 - group targets affect `included_groups` or `managing_groups`
-- when `CUSTOMWARE_PATH` is configured with `node space set CUSTOMWARE_PATH <path>` or process env, those logical `L1/...` writes land under `CUSTOMWARE_PATH/L1/...`
+- when `CUSTOMWARE_PATH` is configured with `node space set CUSTOMWARE_PATH=<path>` or process env, those logical `L1/...` writes land under `CUSTOMWARE_PATH/L1/...`
 
 Parameter meanings:
 
