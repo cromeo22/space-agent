@@ -164,6 +164,40 @@ function buildReleaseNotesUserMessage(commits) {
   return lines.join("\n").trim();
 }
 
+const RELEASE_BODY_REDUNDANT_HEADING_PATTERNS = [
+  /^(?:#{1,6}\s*)?v?\d+\.\d+(?:\.\d+)?(?:\s+latest)?$/iu,
+  /^(?:#{1,6}\s*)?release notes(?:\s*(?:—|-|:)\s*(?:for\s+)?v?\d+\.\d+(?:\.\d+)?)?$/iu,
+  /^(?:#{1,6}\s*)?space agent(?:\s+desktop)?\s+release notes(?:\s*(?:—|-|:)\s*v?\d+\.\d+(?:\.\d+)?)?$/iu
+];
+
+function isRedundantReleaseBodyHeading(line) {
+  const normalized = String(line || "").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return RELEASE_BODY_REDUNDANT_HEADING_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function sanitizeReleaseBody(body) {
+  const lines = String(body || "")
+    .replace(/\r\n?/gu, "\n")
+    .split("\n");
+
+  while (lines.length && !lines[0].trim()) {
+    lines.shift();
+  }
+
+  while (lines.length && isRedundantReleaseBodyHeading(lines[0])) {
+    lines.shift();
+    while (lines.length && !lines[0].trim()) {
+      lines.shift();
+    }
+  }
+
+  return lines.join("\n").trim();
+}
+
 function extractOpenRouterMessageContent(payload) {
   if (!payload || typeof payload !== "object") {
     return "";
@@ -232,21 +266,12 @@ async function generateReleaseBodyWithOpenRouter(commits, options = {}) {
   }
 
   const firstChoice = responsePayload.choices[0];
-  const body = extractOpenRouterMessageContent(firstChoice && firstChoice.message).trim();
+  const body = sanitizeReleaseBody(extractOpenRouterMessageContent(firstChoice && firstChoice.message));
   return body || "";
 }
 
 function buildFallbackReleaseBody(currentTag, previousTag, commits) {
-  const lines = [`# ${currentTag}`, ""];
-
-  if (previousTag) {
-    lines.push(`Changes since ${previousTag}.`);
-  } else {
-    lines.push("Initial desktop release notes for this tag.");
-  }
-
-  lines.push("");
-  lines.push("## Commits");
+  const lines = ["This release includes the commit-level changes below.", "", "## Commits"];
 
   if (!commits.length) {
     lines.push("- No commits were found in this release range.");
@@ -284,6 +309,8 @@ async function main() {
     console.error(error.message || error);
   }
 
+  body = sanitizeReleaseBody(body);
+
   if (options.requireAi && !body) {
     throw new Error("AI release note generation returned an empty body.");
   }
@@ -291,6 +318,8 @@ async function main() {
   if (!body) {
     body = buildFallbackReleaseBody(options.currentTag, options.previousTag, commits);
   }
+
+  body = sanitizeReleaseBody(body);
 
   writeOutput("release_body", body);
   writeOutput("release_commit_count", String(commits.length));

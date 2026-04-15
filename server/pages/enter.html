@@ -789,6 +789,16 @@
         desktopUpdateNoteDetailsText.textContent = showExpandable ? normalizedMessage : "";
       }
 
+      function formatDesktopDisplayVersion(value) {
+        const normalized = typeof value === "string" ? value.trim().replace(/^v/u, "") : "";
+        const match = normalized.match(/^(\d+)\.(\d+)\.(\d+)$/u);
+        if (!match) {
+          return normalized;
+        }
+
+        return Number(match[3]) === 0 ? match[1] + "." + match[2] : normalized;
+      }
+
       function renderDesktopUpdateState(updateStatus) {
         if (!desktopUpdateButton || !desktopUpdateNote) {
           return;
@@ -796,7 +806,8 @@
 
         const state = updateStatus && typeof updateStatus === "object" ? updateStatus : {};
         const statusKey = typeof state.state === "string" ? state.state : "idle";
-        const version = typeof state.version === "string" ? state.version.trim() : "";
+        const version = formatDesktopDisplayVersion(state.version);
+        const progressValue = Number(state.progress);
         let message = typeof state.message === "string" ? state.message.trim() : "";
         let buttonLabel = "";
         let showButton = false;
@@ -804,9 +815,12 @@
 
         if (statusKey === "update-available") {
           buttonLabel = version ? "Update to " + version : "Update Now";
+          message = "";
           showButton = true;
         } else if (statusKey === "downloading") {
-          buttonLabel = "Downloading Update...";
+          buttonLabel = Number.isFinite(progressValue)
+            ? "Downloading " + Math.round(progressValue * 100) + "%"
+            : "Downloading Update...";
           showButton = true;
         } else if (statusKey === "downloaded") {
           buttonLabel = "Restart to Update";
@@ -814,6 +828,8 @@
             ? "Update " + version + " is ready to install. Restart the app to finish installing."
             : "Update ready to install. Restart the app to finish installing.";
           showButton = true;
+        } else if (statusKey === "up-to-date") {
+          message = "";
         } else if (statusKey === "error") {
           noteExpandable = Boolean(message);
         }

@@ -82,6 +82,20 @@ function normalizeDesktopWindowTitle(value) {
   return normalized || BASE_WINDOW_TITLE;
 }
 
+function formatDesktopDisplayVersion(value) {
+  const normalized = String(value || "").trim().replace(/^v/u, "");
+  if (!normalized) {
+    return "";
+  }
+
+  const match = normalized.match(/^(\d+)\.(\d+)\.(\d+)$/u);
+  if (!match) {
+    return normalized;
+  }
+
+  return Number(match[3]) === 0 ? `${match[1]}.${match[2]}` : normalized;
+}
+
 function refreshDesktopWindowTitle() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
@@ -371,7 +385,7 @@ async function checkForDesktopUpdates({ userInitiated = false } = {}) {
   desktopUpdateCheckPromise = (async () => {
     try {
       const result = await autoUpdater.checkForUpdates();
-      const version = String(result?.updateInfo?.version || "").trim();
+      const version = formatDesktopDisplayVersion(result?.updateInfo?.version);
 
       return {
         ok: true,
@@ -491,8 +505,8 @@ function configureDesktopAutoUpdate() {
   });
 
   autoUpdater.on("update-available", (info) => {
-    const version = String(info?.version || "").trim();
-    logDesktopUpdateEvent(`Desktop update available: ${version}`);
+    const version = formatDesktopDisplayVersion(info?.version);
+    logDesktopUpdateEvent(version ? `Desktop update available: ${version}` : "Desktop update available.");
     setDesktopUpdateStatus(version ? `Update ${version} available` : "Update available");
     setDesktopUpdateState({
       state: "update-available",
@@ -504,14 +518,13 @@ function configureDesktopAutoUpdate() {
 
   autoUpdater.on("update-not-available", () => {
     logDesktopUpdateEvent("Desktop app is already up to date.");
-    setDesktopUpdateStatus("Up to date");
+    setDesktopUpdateStatus("");
     setDesktopUpdateState({
       state: "up-to-date",
-      message: "Desktop app is already up to date.",
+      message: "",
       progress: null,
       version: ""
     });
-    clearUpdateStatusSoon();
   });
 
   autoUpdater.on("error", (error) => {
@@ -540,8 +553,8 @@ function configureDesktopAutoUpdate() {
   });
 
   autoUpdater.on("update-downloaded", (info) => {
-    const version = String(info?.version || "").trim();
-    logDesktopUpdateEvent(`Desktop update downloaded: ${version}`);
+    const version = formatDesktopDisplayVersion(info?.version);
+    logDesktopUpdateEvent(version ? `Desktop update downloaded: ${version}` : "Desktop update downloaded.");
     setDesktopUpdateStatus("Update ready to install");
     setDesktopUpdateState({
       state: "downloaded",
