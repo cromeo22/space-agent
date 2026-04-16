@@ -81,7 +81,7 @@ export function getTags(root = globalThis.document) {
 }
 
 export async function resolveRuntimeContext(options = {}) {
-  const desktopApi = options.desktopApi ?? globalThis.spaceDesktop;
+  const desktopApi = options.desktopApi ?? globalThis.space;
   const frontendConfig = options.frontendConfig ?? globalThis.space?.config;
   const packagedFallback = Boolean(desktopApi && frontendConfig?.SINGLE_USER_APP === true);
 

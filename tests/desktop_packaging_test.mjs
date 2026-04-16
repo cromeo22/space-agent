@@ -24,6 +24,23 @@ const {
   resolveDesktopUpdaterInstallMarkerPath,
   writeDesktopUpdaterInstallMarker
 } = require("../packaging/desktop/updater_artifacts.js");
+const {
+  DESKTOP_UPDATER_LOG_RELATIVE_PATH,
+  WINDOWS_INSTALL_WAIT_TIMEOUT_MS,
+  buildWindowsDesktopUpdaterLaunchScript,
+  resolveDesktopUpdaterInstallPlan,
+  resolveDesktopUpdaterLogPath,
+  resolveWindowsUpdaterInstallerArgs
+} = require("../packaging/desktop/updater_install_options.js");
+const {
+  LINUX_ARM64_RELEASE_METADATA_FILE,
+  WINDOWS_RELEASE_METADATA_FILE,
+  normalizeDesktopDebugReleaseVersion,
+  resolveDesktopDebugReleaseAssetUrl,
+  resolveDesktopDebugReleaseMetadataFileName,
+  resolveDesktopDebugReleaseTag,
+  stageDesktopDebugRelease
+} = require("../packaging/desktop/updater_debug_release.js");
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(TEST_DIR, "..");
 
@@ -103,6 +120,174 @@ test("packaged desktop reuses the legacy Agent One user-data root when it still 
     }),
     legacyUserDataPath
   );
+});
+
+test("packaged desktop updater keeps the stock Windows NSIS installer arguments", () => {
+  assert.deepEqual(
+    resolveWindowsUpdaterInstallerArgs({
+      autoRunAppAfterInstall: true
+    }),
+    [
+      "--updated",
+      "--force-run"
+    ]
+  );
+});
+
+test("packaged desktop updater keeps a stable persistent log path under packaged user-data", () => {
+  assert.equal(
+    resolveDesktopUpdaterLogPath({
+      platform: "win32",
+      userDataPath: String.raw`C:\Users\alice\AppData\Roaming\Space Agent`
+    }),
+    path.win32.join(String.raw`C:\Users\alice\AppData\Roaming\Space Agent`, DESKTOP_UPDATER_LOG_RELATIVE_PATH)
+  );
+});
+
+test("packaged desktop updater defers Windows NSIS install until the current app exits", () => {
+  const userDataPath = String.raw`C:\Users\alice\AppData\Roaming\Space Agent`;
+  const installerPath = String.raw`C:\Users\alice\AppData\Local\space-agent-updater\pending\Space-Agent-0.49-windows-x64.exe`;
+  const currentExecutablePath = String.raw`C:\Users\alice\AppData\Local\Programs\Space Agent\Space Agent.exe`;
+  const logPath = resolveDesktopUpdaterLogPath({
+    userDataPath
+  });
+  const { script } = buildWindowsDesktopUpdaterLaunchScript({
+    installerPath,
+    currentExecutablePath,
+    currentProcessId: 4242,
+    autoRunAppAfterInstall: true,
+    logPath,
+    waitTimeoutMs: WINDOWS_INSTALL_WAIT_TIMEOUT_MS
+  });
+  const installPlan = resolveDesktopUpdaterInstallPlan({
+    platform: "win32",
+    installerPath,
+    currentExecutablePath,
+    currentProcessId: 4242,
+    autoRunAppAfterInstall: true,
+    userDataPath,
+    waitTimeoutMs: WINDOWS_INSTALL_WAIT_TIMEOUT_MS
+  });
+
+  assert.equal(installPlan.strategy, "deferred-powershell");
+  assert.equal(installPlan.command, "powershell.exe");
+  assert.deepEqual(installPlan.installerArgs, ["--updated", "--force-run"]);
+  assert.equal(installPlan.logPath, logPath);
+  assert.equal(installPlan.script, script);
+  assert.deepEqual(installPlan.args.slice(0, 7), [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-WindowStyle",
+    "Hidden",
+    "-EncodedCommand"
+  ]);
+  assert.equal(installPlan.script.includes("Add-Content -LiteralPath $logPath"), true);
+  assert.match(installPlan.script, /Helper started\. Waiting for PID/);
+  assert.equal(installPlan.script.includes("Installer start command submitted. Args:"), true);
+  assert.match(installPlan.script, /Get-CimInstance Win32_Process/);
+  assert.match(installPlan.script, /Start-Sleep -Milliseconds 500/);
+  assert.equal(installPlan.script.includes("Start-Process -FilePath $installerPath -ArgumentList $installerArgs"), true);
+  assert.match(installPlan.script, /desktop-updater\.log/);
+  assert.equal(installPlan.script.includes("$parentPid = 4242"), true);
+  assert.match(installPlan.script, /Space Agent\\Space Agent.exe/);
+  assert.match(installPlan.script, /Space-Agent-0.49-windows-x64.exe/);
+});
+
+test("packaged desktop updater keeps the default updater handoff on non-Windows platforms", () => {
+  assert.deepEqual(
+    resolveDesktopUpdaterInstallPlan({
+      platform: "darwin"
+    }),
+    {
+      strategy: "electron-updater"
+    }
+  );
+});
+
+test("packaged desktop debug reinstall normalizes release versions and tags", () => {
+  assert.equal(normalizeDesktopDebugReleaseVersion("", "0.49.0"), "0.49");
+  assert.equal(normalizeDesktopDebugReleaseVersion("v0.48.0"), "0.48");
+  assert.equal(normalizeDesktopDebugReleaseVersion("0.48.2"), "0.48.2");
+  assert.equal(resolveDesktopDebugReleaseTag("", "0.49.0"), "v0.49");
+  assert.equal(resolveDesktopDebugReleaseTag("0.48", "0.49.0"), "v0.48");
+});
+
+test("packaged desktop debug reinstall resolves platform metadata files", () => {
+  assert.equal(
+    resolveDesktopDebugReleaseMetadataFileName({
+      platform: "win32",
+      arch: "x64"
+    }),
+    WINDOWS_RELEASE_METADATA_FILE
+  );
+  assert.equal(
+    resolveDesktopDebugReleaseMetadataFileName({
+      platform: "linux",
+      arch: "arm64"
+    }),
+    LINUX_ARM64_RELEASE_METADATA_FILE
+  );
+});
+
+test("packaged desktop debug reinstall stages same-version and downgrade releases against canonical GitHub assets", async () => {
+  const publishConfig = {
+    provider: "github",
+    owner: "agent0ai",
+    repo: "space-agent"
+  };
+  const fetchCalls = [];
+  const fetchText = async (url) => {
+    fetchCalls.push(url);
+    return url.includes("/v0.48/")
+      ? [
+          "version: 0.48.0",
+          "files:",
+          "  - url: Space Agent 0.48 windows x64.exe",
+          "    sha512: def456"
+        ].join("\n")
+      : [
+          "version: 0.49.0",
+          "files:",
+          "  - url: Space Agent 0.49 windows x64.exe",
+          "    sha512: abc123"
+        ].join("\n");
+  };
+  const sameVersionStage = await stageDesktopDebugRelease({
+    currentVersion: "0.49.0",
+    platform: "win32",
+    publishConfig,
+    fetchText
+  });
+  const downgradeStage = await stageDesktopDebugRelease({
+    requestedVersion: "0.48",
+    currentVersion: "0.49.0",
+    platform: "win32",
+    publishConfig,
+    fetchText
+  });
+
+  assert.equal(sameVersionStage.comparison, 0);
+  assert.equal(sameVersionStage.tag, "v0.49");
+  assert.equal(
+    sameVersionStage.metadataUrl,
+    resolveDesktopDebugReleaseAssetUrl({
+      publishConfig,
+      tag: "v0.49",
+      fileName: WINDOWS_RELEASE_METADATA_FILE
+    })
+  );
+  assert.equal(
+    sameVersionStage.provider.resolveFiles(sameVersionStage.info)[0].url.href,
+    "https://github.com/agent0ai/space-agent/releases/download/v0.49/Space-Agent-0.49-windows-x64.exe"
+  );
+  assert.equal(downgradeStage.comparison, -1);
+  assert.equal(downgradeStage.tag, "v0.48");
+  assert.deepEqual(fetchCalls, [
+    "https://github.com/agent0ai/space-agent/releases/download/v0.49/metadata-latest-windows.yml",
+    "https://github.com/agent0ai/space-agent/releases/download/v0.48/metadata-latest-windows.yml"
+  ]);
 });
 
 test("packaged desktop updater cache roots cover current and legacy rebrand directories", () => {

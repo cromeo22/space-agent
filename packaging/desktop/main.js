@@ -1,3 +1,5 @@
+const { spawn } = require("node:child_process");
+const fsPromises = require("node:fs/promises");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { app, BrowserWindow, ipcMain, net, webFrameMain } = require("electron");
@@ -10,6 +12,13 @@ const {
   cleanupDesktopUpdaterArtifacts,
   writeDesktopUpdaterInstallMarker
 } = require("./updater_artifacts");
+const {
+  resolveDesktopUpdaterInstallPlan,
+  resolveDesktopUpdaterLogPath
+} = require("./updater_install_options");
+const {
+  stageDesktopDebugRelease
+} = require("./updater_debug_release");
 
 const DESKTOP_FRAME_PRELOAD_PATH = path.join(__dirname, "frame-preload.js");
 const DESKTOP_FRAME_INJECT_REGISTER_CHANNEL = "space-desktop:frame-inject-register";
@@ -643,12 +652,225 @@ function loadDesktopAutoUpdater() {
   return desktopAutoUpdater;
 }
 
+function launchDetachedDesktopCommand(command, args = []) {
+  return new Promise((resolve, reject) => {
+    let childProcess = null;
+
+    try {
+      childProcess = spawn(command, args, {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    childProcess.once("error", reject);
+    childProcess.once("spawn", () => {
+      childProcess.unref();
+      resolve();
+    });
+  });
+}
+
+async function appendDesktopUpdaterPersistentLog(logPath, message, details = null) {
+  const resolvedLogPath = String(logPath || "").trim();
+  const normalizedMessage = String(message || "").trim();
+
+  if (!resolvedLogPath || !normalizedMessage) {
+    return;
+  }
+
+  const lines = [
+    `${new Date().toISOString()} [space-desktop/updater] ${normalizedMessage}`
+  ];
+
+  if (details && typeof details === "object") {
+    try {
+      lines.push(JSON.stringify(details));
+    } catch {
+      // Keep logging best effort only.
+    }
+  }
+
+  try {
+    await fsPromises.mkdir(path.dirname(resolvedLogPath), {
+      recursive: true
+    });
+    await fsPromises.appendFile(resolvedLogPath, `${lines.join("\n")}\n`, "utf8");
+  } catch {
+    // Persistent updater logging must never block launch or install handoff.
+  }
+}
+
+function resolveDesktopUpdaterLogPathForCurrentRun() {
+  return resolveDesktopUpdaterLogPath({
+    userDataPath: app.getPath("userData")
+  });
+}
+
+function resolveDesktopUpdaterInstallPlanForCurrentRun(autoUpdater) {
+  const downloadedUpdateHelper = autoUpdater?.downloadedUpdateHelper || null;
+  const downloadedFileInfo = downloadedUpdateHelper?.downloadedFileInfo || null;
+
+  return resolveDesktopUpdaterInstallPlan({
+    platform: process.platform,
+    installerPath: autoUpdater?.installerPath,
+    packagePath: downloadedUpdateHelper?.packageFile,
+    currentExecutablePath: process.execPath,
+    currentProcessId: process.pid,
+    autoRunAppAfterInstall: autoUpdater?.autoRunAppAfterInstall,
+    isAdminRightsRequired: downloadedFileInfo?.isAdminRightsRequired === true,
+    elevatePath: path.join(process.resourcesPath, "elevate.exe"),
+    logPath: resolveDesktopUpdaterLogPathForCurrentRun()
+  });
+}
+
 function isDesktopNetworkOnline() {
   try {
     return !net || typeof net.isOnline !== "function" || net.isOnline();
   } catch (error) {
     reportDesktopUpdateFailure("Could not determine desktop network status.", error);
     return true;
+  }
+}
+
+function resolveDesktopDebugReinstallRequestVersion(payload = {}) {
+  if (typeof payload === "string") {
+    return String(payload || "").trim();
+  }
+
+  if (payload && typeof payload === "object") {
+    return String(payload.version || "").trim();
+  }
+
+  return "";
+}
+
+async function fetchDesktopUpdateMetadataText(metadataUrl) {
+  const response = await fetch(metadataUrl, {
+    headers: {
+      accept: "text/yaml, text/x-yaml, text/plain, */*"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Could not download desktop update metadata ${metadataUrl} (${response.status} ${response.statusText || "Unknown"}).`
+    );
+  }
+
+  return await response.text();
+}
+
+async function stageDesktopDebugReinstall(payload = {}) {
+  if (!shouldEnableDesktopAutoUpdate()) {
+    return { ok: false, reason: "unavailable" };
+  }
+
+  const autoUpdater = loadDesktopAutoUpdater();
+  if (!autoUpdater) {
+    return { ok: false, reason: "unavailable" };
+  }
+
+  if (!isDesktopNetworkOnline()) {
+    const message = "Debug reinstall skipped while offline.";
+    logDesktopUpdateEvent(`Desktop ${message.toLowerCase()}`);
+    setDesktopUpdateStatus(message);
+    setDesktopUpdateState({
+      state: "offline",
+      message,
+      progress: null,
+      version: ""
+    });
+    clearUpdateStatusSoon();
+    return { ok: false, reason: "offline", message };
+  }
+
+  const requestedVersion = resolveDesktopDebugReinstallRequestVersion(payload);
+  const currentVersion = app.getVersion();
+  const requestedLabel = requestedVersion || currentVersion;
+
+  setDesktopUpdateStatus("Preparing debug reinstall...", "indeterminate");
+  setDesktopUpdateState({
+    state: "checking",
+    message: "Preparing debug reinstall...",
+    progress: null,
+    version: ""
+  });
+
+  try {
+    const publishConfig = await autoUpdater.configOnDisk.value;
+    const stagedRelease = await stageDesktopDebugRelease({
+      requestedVersion,
+      currentVersion,
+      platform: process.platform,
+      arch: process.arch,
+      publishConfig,
+      fetchText: fetchDesktopUpdateMetadataText
+    });
+    const targetVersion = formatDesktopDisplayVersion(stagedRelease.info?.version || stagedRelease.requestedVersion);
+    const action =
+      stagedRelease.comparison < 0
+        ? "downgrade"
+        : stagedRelease.comparison === 0
+          ? "reinstall"
+          : "update";
+    const logPath = resolveDesktopUpdaterLogPathForCurrentRun();
+
+    autoUpdater.allowDowngrade = stagedRelease.comparison < 0;
+    autoUpdater.updateInfoAndProvider = {
+      info: stagedRelease.info,
+      provider: stagedRelease.provider
+    };
+
+    logDesktopUpdateEvent(
+      `Prepared desktop debug ${action} ${targetVersion || stagedRelease.requestedVersion} from ${stagedRelease.tag} using ${stagedRelease.metadataFileName}.`
+    );
+
+    await appendDesktopUpdaterPersistentLog(logPath, "Prepared desktop debug reinstall staging.", {
+      action,
+      currentVersion,
+      metadataFileName: stagedRelease.metadataFileName,
+      metadataUrl: stagedRelease.metadataUrl,
+      requestedVersion: requestedLabel,
+      targetVersion: stagedRelease.info?.version || stagedRelease.requestedVersion,
+      tag: stagedRelease.tag
+    });
+
+    setDesktopUpdateStatus(targetVersion ? `Update ${targetVersion} available` : "Update available");
+    setDesktopUpdateState({
+      state: "update-available",
+      message: targetVersion ? `Update ${targetVersion} is available.` : "A desktop update is available.",
+      progress: null,
+      version: targetVersion
+    });
+
+    const downloadResult = await downloadDesktopUpdate();
+    if (!downloadResult?.ok) {
+      return downloadResult;
+    }
+
+    return {
+      ok: true,
+      action,
+      metadataUrl: stagedRelease.metadataUrl,
+      status: desktopUpdateState.state,
+      tag: stagedRelease.tag,
+      version: desktopUpdateState.version || targetVersion
+    };
+  } catch (error) {
+    const formattedError = reportDesktopUpdateFailure(
+      `Desktop debug reinstall preparation failed for ${requestedLabel}.`,
+      error
+    );
+    return {
+      ok: false,
+      reason: "error",
+      message: formattedError.summary
+    };
   }
 }
 
@@ -776,9 +998,90 @@ async function installDesktopUpdate() {
     progress: null
   });
 
-  // Keep Windows updates on the silent NSIS restart path, but rely on the
-  // installer's registry identity instead of overriding the target directory here.
-  const useSilentWindowsInstall = process.platform === "win32";
+  let installPlan = null;
+
+  try {
+    installPlan = resolveDesktopUpdaterInstallPlanForCurrentRun(autoUpdater);
+  } catch (error) {
+    const formattedError = reportDesktopUpdateFailure("Desktop update install preparation failed.", error);
+    return {
+      ok: false,
+      reason: "error",
+      message: formattedError.summary
+    };
+  }
+
+  if (installPlan.strategy === "deferred-powershell") {
+    const logPath = String(installPlan.logPath || "").trim();
+    const persistentLogDetails = {
+      currentExecutablePath: process.execPath,
+      currentProcessId: process.pid,
+      installerArgs: installPlan.installerArgs,
+      installerPath: autoUpdater?.installerPath || "",
+      logPath,
+      packagePath: autoUpdater?.downloadedUpdateHelper?.packageFile || "",
+      targetVersion: desktopUpdateState.version || ""
+    };
+
+    await appendDesktopUpdaterPersistentLog(
+      logPath,
+      "Preparing deferred Windows NSIS handoff.",
+      persistentLogDetails
+    );
+
+    try {
+      await launchDetachedDesktopCommand(installPlan.command, installPlan.args);
+    } catch (error) {
+      await appendDesktopUpdaterPersistentLog(logPath, "Deferred Windows updater helper launch failed.", {
+        message: String(error?.message || error || "Unknown error")
+      });
+      const formattedError = reportDesktopUpdateFailure("Desktop update install handoff failed.", error);
+      return {
+        ok: false,
+        reason: "error",
+        message: formattedError.summary
+      };
+    }
+
+    await appendDesktopUpdaterPersistentLog(logPath, "Deferred Windows updater helper launched.", {
+      command: installPlan.command
+    });
+
+    try {
+      await writeDesktopUpdaterInstallMarker({
+        fromVersion: app.getVersion(),
+        targetVersion: desktopUpdateState.version || "",
+        userDataPath: app.getPath("userData")
+      });
+      await appendDesktopUpdaterPersistentLog(logPath, "Updater cleanup marker written.", {
+        fromVersion: app.getVersion(),
+        targetVersion: desktopUpdateState.version || ""
+      });
+    } catch (error) {
+      await appendDesktopUpdaterPersistentLog(logPath, "Could not persist the updater cleanup marker.", {
+        message: String(error?.message || error || "Unknown error")
+      });
+      logDesktopUpdateEvent("Could not persist the desktop updater cleanup marker.", {
+        level: "warn",
+        error
+      });
+    }
+
+    logDesktopUpdateEvent(
+      logPath
+        ? `Installing downloaded desktop update with the deferred Windows NSIS handoff after the app exits. Persistent log: ${logPath}`
+        : "Installing downloaded desktop update with the deferred Windows NSIS handoff after the app exits."
+    );
+
+    await appendDesktopUpdaterPersistentLog(logPath, "Requesting app quit for deferred Windows update install.");
+
+    prepareDesktopForQuit();
+    setImmediate(() => {
+      app.quit();
+    });
+
+    return { ok: true, status: "installing", version: desktopUpdateState.version || "" };
+  }
 
   try {
     await stopServerRuntime();
@@ -804,11 +1107,13 @@ async function installDesktopUpdate() {
     });
   }
 
+  logDesktopUpdateEvent("Installing downloaded desktop update with the default updater handoff.");
+
   // Electron emits before-quit after updater-triggered window close events on macOS,
   // so the host must mark updater restarts as real quits before calling quitAndInstall().
   prepareDesktopForQuit();
   setImmediate(() => {
-    autoUpdater.quitAndInstall(useSilentWindowsInstall, useSilentWindowsInstall);
+    autoUpdater.quitAndInstall();
   });
 
   return { ok: true, status: "installing", version: desktopUpdateState.version || "" };
@@ -1057,6 +1362,7 @@ ipcMain.on(DESKTOP_FRAME_INJECT_REGISTER_CHANNEL, (event, payload = {}) => {
 ipcMain.handle("space-desktop:check-for-updates", () => checkForDesktopUpdates({ userInitiated: true }));
 ipcMain.handle("space-desktop:download-update", () => downloadDesktopUpdate());
 ipcMain.handle("space-desktop:install-update", () => installDesktopUpdate());
+ipcMain.handle("space-desktop:debug-reinstall", (_event, payload) => stageDesktopDebugReinstall(payload));
 
 app.on("before-quit", () => {
   prepareDesktopForQuit();
