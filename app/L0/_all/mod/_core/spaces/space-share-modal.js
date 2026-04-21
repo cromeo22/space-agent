@@ -188,22 +188,55 @@ async function shouldPromptForOverwrite(spaceId, currentSpace) {
   }
 }
 
-async function fetchSpaceArchiveBytes(spaceId) {
+function buildSpaceDownloadPath(spaceId) {
+  return buildSpaceRootPath(spaceId);
+}
+
+function createSpaceDownloadUrl(spaceId) {
   const runtime = getRuntime();
-  const response = await fetch(runtime.api.folderDownloadUrl(buildSpaceRootPath(spaceId)), {
-    method: "GET",
+  return runtime.api.folderDownloadUrl(buildSpaceDownloadPath(spaceId));
+}
+
+async function readResponseErrorMessage(response, fallback) {
+  let payload = null;
+
+  try {
+    payload = await response.clone().json();
+  } catch {}
+
+  if (payload && typeof payload === "object" && String(payload.error || "").trim()) {
+    return String(payload.error).trim();
+  }
+
+  try {
+    const text = String(await response.text()).trim();
+
+    if (text) {
+      return text;
+    }
+  } catch {}
+
+  return fallback;
+}
+
+async function verifySpaceArchiveDownload(spaceId) {
+  const runtime = getRuntime();
+
+  await runtime.api.call("folder_download", {
+    method: "HEAD",
+    query: {
+      path: buildSpaceDownloadPath(spaceId)
+    }
+  });
+}
+
+async function fetchSpaceArchiveBytes(spaceId) {
+  const response = await fetch(createSpaceDownloadUrl(spaceId), {
     credentials: "same-origin"
   });
 
   if (!response.ok) {
-    let detail = "Unable to create the space ZIP.";
-
-    try {
-      const payload = await response.json();
-      detail = String(payload?.error || detail);
-    } catch {}
-
-    throw new Error(detail);
+    throw new Error(await readResponseErrorMessage(response, "Unable to create the ZIP."));
   }
 
   return new Uint8Array(await response.arrayBuffer());
@@ -422,16 +455,9 @@ const model = {
     this.archiveStatusText = "Preparing ZIP download...";
 
     try {
-      const runtime = getRuntime();
-      const spaceRoot = buildSpaceRootPath(this.spaceId);
-      await runtime.api.call("folder_download", {
-        method: "HEAD",
-        query: {
-          path: spaceRoot
-        }
-      });
+      await verifySpaceArchiveDownload(this.spaceId);
       createAnchorDownload(
-        runtime.api.folderDownloadUrl(spaceRoot),
+        createSpaceDownloadUrl(this.spaceId),
         createDownloadFilename(this.spaceId, this.spaceTitle)
       );
       this.archiveStatusText = "ZIP download started.";
@@ -620,4 +646,3 @@ export async function openSpaceShareModal(options = {}) {
 
 runtime.spaces = runtime.spaces || {};
 runtime.spaces.openShareModal = openSpaceShareModal;
-

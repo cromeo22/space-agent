@@ -63,19 +63,48 @@ function sendFile(res, filePath, options = {}) {
 
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
+  const headers = options.headers || {};
 
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      sendNotFound(res, options.headers);
+  fs.stat(filePath, (statError, stats) => {
+    if (statError || !stats.isFile()) {
+      sendNotFound(res, headers);
       return;
     }
 
-    res.writeHead(200, {
-      ...(options.headers || {}),
-      "Content-Type": contentType,
-      "Content-Length": data.length
+    const stream = fs.createReadStream(filePath);
+    let responseStarted = false;
+
+    stream.once("open", () => {
+      if (res.writableEnded) {
+        stream.destroy();
+        return;
+      }
+
+      responseStarted = true;
+      res.writeHead(200, {
+        ...headers,
+        "Content-Type": contentType,
+        "Content-Length": stats.size
+      });
+      stream.pipe(res);
     });
-    res.end(data);
+
+    stream.once("error", () => {
+      if (!responseStarted && !res.headersSent) {
+        sendNotFound(res, headers);
+        return;
+      }
+
+      if (!res.writableEnded) {
+        res.destroy();
+      }
+    });
+
+    res.once("close", () => {
+      if (!stream.destroyed) {
+        stream.destroy();
+      }
+    });
   });
 }
 

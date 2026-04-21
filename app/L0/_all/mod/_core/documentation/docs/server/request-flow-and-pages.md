@@ -113,6 +113,12 @@ The router supports direct authenticated fetches for app files:
 
 These paths stay logical even when writable storage is relocated through `CUSTOMWARE_PATH`.
 
+Path handling and delivery details:
+
+- direct app-file fetches percent-decode each URL path segment before logical path normalization, so normal browser-encoded filenames such as spaces, brackets, unicode, `#`, and `?` resolve to the actual on-disk file name
+- encoded separators such as `%2F` and `%5C` are rejected instead of being allowed to become filesystem path separators during later normalization
+- direct app-file fetches, page assets, and module files are streamed from disk after a stat check instead of being fully buffered into server RAM before the response starts
+
 ## Cross-Worker Visibility
 
 Clustered writes are ordered through the primary watchdog owner and the shared state version.

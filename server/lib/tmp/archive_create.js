@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import archiver from "archiver";
 
 import { SERVER_TMP_DIR } from "../../config.js";
 import { ensureServerTmpDir } from "./tmp_watch.js";
@@ -48,54 +48,68 @@ function removeArchiveQuietly(archivePath) {
   fs.rm(archivePath, { force: true }, () => {});
 }
 
-function createArchiveFailureMessage(stderrText, code, signal) {
-  const detail = String(stderrText || "").trim();
+function createArchiveFailureMessage(error) {
+  const detail = String(error?.message || "").trim();
 
-  if (detail) {
-    return `ZIP archive creation failed: ${detail}`;
+  if (!detail) {
+    return "ZIP archive creation failed.";
   }
 
-  if (signal) {
-    return `ZIP archive creation was interrupted by signal ${signal}.`;
-  }
-
-  return `ZIP archive creation failed with exit code ${code}.`;
+  return `ZIP archive creation failed: ${detail}`;
 }
 
-function runZipProcess(options = {}) {
+function writeZipArchive(options = {}) {
   const archivePath = String(options.archivePath || "");
+  const sourceAbsolutePath = String(options.sourceAbsolutePath || "");
   const sourceName = String(options.sourceName || "");
-  const workingDirectory = String(options.workingDirectory || "");
 
   return new Promise((resolve, reject) => {
-    const zipProcess = spawn("zip", ["-r", "-q", "-1", "-y", archivePath, sourceName], {
-      cwd: workingDirectory,
-      stdio: ["ignore", "ignore", "pipe"]
+    const outputStream = fs.createWriteStream(archivePath);
+    const archive = archiver("zip", {
+      zlib: {
+        level: 1
+      }
     });
-    let stderrText = "";
+    let settled = false;
 
-    zipProcess.stderr.on("data", (chunk) => {
-      if (stderrText.length >= 8192) {
+    function resolveOnce() {
+      if (settled) {
         return;
       }
 
-      stderrText += String(chunk);
-    });
+      settled = true;
+      resolve();
+    }
 
-    zipProcess.once("error", (error) => {
-      removeArchiveQuietly(archivePath);
-      reject(createArchiveError(`ZIP archiver is not available on this host: ${error.message}`));
-    });
-
-    zipProcess.once("close", (code, signal) => {
-      if (code === 0) {
-        resolve();
+    function rejectOnce(error) {
+      if (settled) {
         return;
       }
 
+      settled = true;
+      archive.destroy();
+      outputStream.destroy();
       removeArchiveQuietly(archivePath);
-      reject(createArchiveError(createArchiveFailureMessage(stderrText, code, signal)));
-    });
+      reject(createArchiveError(createArchiveFailureMessage(error)));
+    }
+
+    outputStream.once("close", resolveOnce);
+    outputStream.once("error", rejectOnce);
+    archive.once("warning", rejectOnce);
+    archive.once("error", rejectOnce);
+    archive.pipe(outputStream);
+
+    archive.directory(sourceAbsolutePath, sourceName);
+
+    try {
+      const finalizeResult = archive.finalize();
+
+      if (finalizeResult && typeof finalizeResult.then === "function") {
+        finalizeResult.catch(rejectOnce);
+      }
+    } catch (error) {
+      rejectOnce(error);
+    }
   });
 }
 
@@ -125,10 +139,10 @@ function createDirectoryZipArchive(options = {}) {
   const sourceName = path.basename(sourceAbsolutePath);
   const archivePath = createArchivePath(options.archiveBaseName || sourceName, options);
 
-  return runZipProcess({
+  return writeZipArchive({
     archivePath,
-    sourceName,
-    workingDirectory: path.dirname(sourceAbsolutePath)
+    sourceAbsolutePath,
+    sourceName
   }).then(() => ({
     archivePath,
     downloadFilename: ensureZipFilename(options.downloadFilename || sourceName)

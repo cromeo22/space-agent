@@ -130,7 +130,7 @@ It is the right tool for catalog discovery, not for raw filesystem walking.
 - supports `HEAD` for permission-only validation
 - supports `GET` and `POST` for the actual ZIP download
 - resolves readable folders through the shared permission model
-- creates the archive in `server/tmp/`
+- creates the archive in `server/tmp/` with the backend Node ZIP helper instead of a host `zip` binary
 - streams the attachment instead of buffering the ZIP into browser memory
 
 Frontend code that wants an attachment-style download should prefer:

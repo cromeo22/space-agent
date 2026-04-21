@@ -93,12 +93,14 @@ Direct app-file fetches:
 - `app_fetch_handler.js` maps `/~/...` to the authenticated user's `L2/<username>/...`
 - `/L0/...`, `/L1/...`, and `/L2/...` are also supported for authenticated direct fetches
 - those request paths stay logical even when `CUSTOMWARE_PATH` moves writable `L1` and `L2` storage outside the repo
+- app-fetch path decoding must percent-decode each URL path segment before logical app-path normalization so browser-encoded filenames such as spaces, brackets, unicode, `#`, and `?` resolve to their real on-disk names, while encoded path separators such as `%2F` or `%5C` remain invalid instead of becoming filesystem separators
 - read permission checks are delegated to `createAppAccessController(...)`
 - `.git` metadata paths are blocked even when they live inside a readable writable-layer owner root
 
 Responses:
 
 - `responses.js` owns JSON serialization, redirects, file responses, stream responses, and Web `Response` bridging
+- `responses.js.sendFile(...)` must stream file bodies from disk after a stat check instead of buffering the whole file into memory first
 - `cors.js` owns the API CORS policy and `OPTIONS` handling
 - `router.js` must log every caught API handler failure once, including non-5xx responses, and should prefer an attached `error.cause` when endpoint wrappers preserve the underlying backend exception; 5xx bodies are still redacted to `Internal server error` for the browser
 

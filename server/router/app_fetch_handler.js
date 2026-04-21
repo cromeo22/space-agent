@@ -9,8 +9,46 @@ import {
 } from "../lib/customware/layout.js";
 import { sendFile, sendJson, sendNotFound } from "./responses.js";
 
+function decodeAppFetchPathSegment(segment) {
+  const normalizedSegment = String(segment ?? "").replace(/%(?![0-9A-Fa-f]{2})/g, "%25");
+  let decodedSegment;
+
+  try {
+    decodedSegment = decodeURIComponent(normalizedSegment);
+  } catch {
+    return null;
+  }
+
+  // Preserve URL path segment boundaries instead of letting encoded separators
+  // turn into filesystem path separators during later normalization.
+  if (
+    decodedSegment.includes("/") ||
+    decodedSegment.includes("\\") ||
+    decodedSegment.includes("\0")
+  ) {
+    return null;
+  }
+
+  return decodedSegment;
+}
+
+function decodeAppFetchRequestPath(requestPath) {
+  const rawPath = String(requestPath || "/");
+  const decodedSegments = rawPath
+    .split("/")
+    .map((segment) => decodeAppFetchPathSegment(segment));
+
+  return decodedSegments.includes(null) ? null : decodedSegments.join("/") || "/";
+}
+
 function resolveAppFetchProjectPath(requestPath, username) {
-  const normalizedPath = path.posix.normalize(requestPath || "/");
+  const decodedRequestPath = decodeAppFetchRequestPath(requestPath);
+
+  if (!decodedRequestPath) {
+    return null;
+  }
+
+  const normalizedPath = path.posix.normalize(decodedRequestPath || "/");
   let appRelativePath;
 
   if (normalizedPath.startsWith("/~/")) {

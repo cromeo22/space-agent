@@ -13,7 +13,7 @@ Documentation is top priority for this subtree. After any change under `server/l
 This subtree owns:
 
 - `tmp_watch.js`: temp-directory creation plus the interval-backed janitor for stale entries
-- `archive_create.js`: unique temp archive allocation, host `zip` process orchestration, attachment filename headers, and cleanup-aware archive streams
+- `archive_create.js`: unique temp archive allocation, in-process ZIP creation, attachment filename headers, and cleanup-aware archive streams
 - `server/tmp/`: the runtime temp directory for transitory server artifacts, kept in git through `.gitignore`
 
 ## Temp Directory Contract
@@ -32,7 +32,7 @@ Current folder-download behavior:
 
 - folder archives are created inside `server/tmp/`
 - archive filenames on disk are unique and sanitized to avoid collisions
-- the archive builder uses the host `zip` command with fast compression (`-1`) and symbolic-link preservation (`-y`) so the server does not buffer archive contents in memory
+- the archive builder uses the in-process Node `archiver` ZIP implementation with fast compression and symbolic-link preservation, writing the archive to disk in `server/tmp/` before the response stream opens
 - streamed archive files are unlinked after the response stream closes; the janitor is the fallback cleanup path if any request exits early or misses manual cleanup
 
 ## Development Guidance

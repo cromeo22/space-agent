@@ -92,6 +92,7 @@
     "purpose": "Thin mobile-compatible server bridge for fetch proxying and local infrastructure."
   },
   "dependencies": {
+    "archiver": "^7.0.1",
     "electron-updater": "^6.8.3",
     "isomorphic-git": "^1.37.4"
   },
