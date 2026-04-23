@@ -122,6 +122,42 @@ test("watchdog tracks CLI-style user and group writes without periodic reconcile
   assert.equal(Boolean(watchdog.getIndex("path_index")["/app/L2/bob/meta/password.json"]), true);
 });
 
+test("watchdog explicit project-path sync hydrates missing ancestors without a full layer rescan", async (testContext) => {
+  const customwarePath = fs.mkdtempSync(path.join(os.tmpdir(), "space-watchdog-project-sync-"));
+  const runtimeParams = createCustomwareRuntimeParams(customwarePath);
+  const watchdog = createWatchdog({
+    liveWatchEnabled: false,
+    projectRoot: PROJECT_ROOT,
+    reconcileIntervalMs: 0,
+    runtimeParams
+  });
+
+  testContext.after(() => {
+    watchdog.stop();
+    fs.rmSync(customwarePath, { force: true, recursive: true });
+  });
+
+  fs.mkdirSync(path.join(customwarePath, "L1"), { recursive: true });
+  fs.mkdirSync(path.join(customwarePath, "L2"), { recursive: true });
+
+  await watchdog.start();
+
+  const targetDirectory = path.join(customwarePath, "L2", "alice", "notes", "nested");
+  const targetFile = path.join(targetDirectory, "a.txt");
+
+  fs.mkdirSync(targetDirectory, { recursive: true });
+  fs.writeFileSync(targetFile, "hello");
+
+  await watchdog.applyProjectPathChanges(["/app/L2/alice/notes/nested/a.txt"]);
+
+  const pathIndex = watchdog.getIndex("path_index");
+
+  assert.equal(Boolean(pathIndex["/app/L2/alice/"]), true);
+  assert.equal(Boolean(pathIndex["/app/L2/alice/notes/"]), true);
+  assert.equal(Boolean(pathIndex["/app/L2/alice/notes/nested/"]), true);
+  assert.equal(Boolean(pathIndex["/app/L2/alice/notes/nested/a.txt"]), true);
+});
+
 test("watchdog schedules reconciles from the previous completion instead of queuing overlap", async (testContext) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "space-watchdog-reconcile-"));
   const projectRoot = path.join(tempRoot, "project");

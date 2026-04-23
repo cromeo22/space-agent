@@ -27,6 +27,23 @@ function normalizeStoredCoordinate(value) {
   return null;
 }
 
+function normalizeUiStateOwner(value) {
+  return String(value || "").trim();
+}
+
+async function getUiStateOwner(runtime) {
+  if (!runtime?.api || typeof runtime.api.userSelfInfo !== "function") {
+    return "";
+  }
+
+  try {
+    const identity = await runtime.api.userSelfInfo();
+    return normalizeUiStateOwner(identity?.username);
+  } catch {
+    return "";
+  }
+}
+
 function normalizeStoredPromptBudgetRatios(storedConfig = {}) {
   const storedRatios =
     storedConfig.prompt_budget_ratios ||
@@ -251,7 +268,8 @@ function normalizeStoredUiState(parsedState) {
     agentY: normalizeStoredCoordinate(rawY),
     hiddenEdge: config.normalizeOnscreenAgentHiddenEdge(rawHiddenEdge),
     historyHeight: config.normalizeOnscreenAgentHistoryHeight(rawHistoryHeight),
-    displayMode: storedDisplayMode || legacyDisplayMode || DISPLAY_MODE_COMPACT
+    displayMode: storedDisplayMode || legacyDisplayMode || DISPLAY_MODE_COMPACT,
+    owner: normalizeUiStateOwner(storedState.owner || storedState.username)
   };
 }
 
@@ -282,14 +300,19 @@ async function buildStoredConfigPayload(runtime, { settings, systemPrompt }) {
   return payload;
 }
 
-function buildStoredUiStatePayload({ agentX, agentY, hiddenEdge, historyHeight, displayMode }) {
+function buildStoredUiStatePayload({ agentX, agentY, hiddenEdge, historyHeight, displayMode, owner }) {
   const normalizedDisplayMode = normalizeDisplayMode(displayMode) || DISPLAY_MODE_COMPACT;
   const normalizedHiddenEdge = config.normalizeOnscreenAgentHiddenEdge(hiddenEdge);
   const normalizedHistoryHeight = config.normalizeOnscreenAgentHistoryHeight(historyHeight);
+  const normalizedOwner = normalizeUiStateOwner(owner);
   const payload = {
     display_mode: normalizedDisplayMode,
     collapsed: normalizedDisplayMode === DISPLAY_MODE_COMPACT
   };
+
+  if (normalizedOwner) {
+    payload.owner = normalizedOwner;
+  }
 
   if (typeof agentX === "number" && Number.isFinite(agentX)) {
     payload.agent_x = Math.round(agentX);
@@ -317,12 +340,28 @@ function getStorageArea(storageName) {
     : null;
 }
 
-function loadUiStateFromStorageArea(storageName) {
+function loadUiStateFromStorageArea(storageName, options = {}) {
   try {
     const storageArea = getStorageArea(storageName);
     const rawValue = storageArea?.getItem(config.ONSCREEN_AGENT_UI_STATE_STORAGE_KEY);
     const parsedValue = rawValue ? JSON.parse(rawValue) : null;
-    return parsedValue && typeof parsedValue === "object" ? normalizeStoredUiState(parsedValue) : null;
+    const normalizedState = parsedValue && typeof parsedValue === "object" ? normalizeStoredUiState(parsedValue) : null;
+
+    if (!normalizedState) {
+      return null;
+    }
+
+    const expectedOwner = normalizeUiStateOwner(options.owner);
+
+    if (!expectedOwner) {
+      return options.allowUnowned === false ? null : normalizedState;
+    }
+
+    if (!normalizedState.owner) {
+      return options.allowUnowned === false ? null : normalizedState;
+    }
+
+    return normalizedState.owner === expectedOwner ? normalizedState : null;
   } catch {
     return null;
   }
@@ -347,6 +386,7 @@ function persistUiStateToStorageArea(storageName, nextState) {
 
 export async function loadOnscreenAgentConfig() {
   const runtime = getRuntime();
+  const uiStateOwner = await getUiStateOwner(runtime);
 
   try {
     const result = await runtime.api.fileRead(config.ONSCREEN_AGENT_CONFIG_PATH);
@@ -355,22 +395,39 @@ export async function loadOnscreenAgentConfig() {
       runtime.utils.yaml.parse(String(result?.content || ""))
     );
     const storedUiState =
-      loadUiStateFromStorageArea("sessionStorage") ||
-      loadUiStateFromStorageArea("localStorage") ||
+      loadUiStateFromStorageArea("sessionStorage", { owner: uiStateOwner }) ||
+      loadUiStateFromStorageArea("localStorage", { owner: uiStateOwner }) ||
       normalizeStoredUiState(normalizedConfig);
 
     return {
       settings: normalizedConfig.settings,
       systemPrompt: normalizedConfig.systemPrompt,
       ...storedUiState,
+      uiStateOwner,
       shouldCenterInitialPosition: false
     };
   } catch (error) {
     if (isMissingFileError(error)) {
-      // A missing per-user config means first-run defaults for this load.
+      const storedUiState =
+        loadUiStateFromStorageArea("sessionStorage", { allowUnowned: false, owner: uiStateOwner }) ||
+        loadUiStateFromStorageArea("localStorage", { allowUnowned: false, owner: uiStateOwner });
+      const defaultConfig = createDefaultConfig();
+
+      if (storedUiState) {
+        return {
+          settings: defaultConfig.settings,
+          systemPrompt: defaultConfig.systemPrompt,
+          ...storedUiState,
+          uiStateOwner,
+          shouldCenterInitialPosition: false
+        };
+      }
+
+      // A missing per-user config with no owner-tagged UI state means first-run defaults for this load.
       return {
-        ...createDefaultConfig(),
+        ...defaultConfig,
         ...createDefaultUiState(),
+        uiStateOwner,
         shouldCenterInitialPosition: true
       };
     }

@@ -231,7 +231,7 @@ export const help = {
     "node space update <commit>"
   ],
   description:
-    "For source checkouts only. The updater uses GIT_URL when it is set, otherwise the local origin remote URL, and falls back to the canonical Space Agent repository only when neither is configured. It pins origin to that update remote before fetching, then prefers native Git, then NodeGit when installed and loadable, then isomorphic-git. For GitHub remotes it uses SPACE_GITHUB_TOKEN when that environment variable is set, and sends no GitHub auth header when it is not. Without an argument, it fast-forwards the current branch from origin, or reconnects from detached HEAD to the remembered or default origin branch first. You can also target a branch explicitly with --branch <branch> or a bare branch name. Version tags and short/full commit hashes move the current or remembered branch to that exact revision when possible, falling back to detached HEAD only when no branch can be recovered.",
+    "For source checkouts only. The updater uses GIT_URL when it is set, otherwise the local origin remote URL, and falls back to the canonical Space Agent repository only when neither is configured. It pins origin to that update remote before fetching, then prefers native Git and falls back to isomorphic-git when native Git is unavailable. For GitHub remotes it uses SPACE_GITHUB_TOKEN when that environment variable is set, and sends no GitHub auth header when it is not. Without an argument, it fast-forwards the current branch from origin, or reconnects from detached HEAD to the remembered or default origin branch first. You can also target a branch explicitly with --branch <branch> or a bare branch name. Version tags and short/full commit hashes move the current or remembered branch to that exact revision when possible, falling back to detached HEAD only when no branch can be recovered.",
   arguments: [
     {
       name: "<branch>",
@@ -264,12 +264,13 @@ export const help = {
 export async function execute(context) {
   const { branchName, target } = parseUpdateArgs(context.args);
   const gitClient = await createGitClient({ projectRoot: context.projectRoot });
+  const requestedBackend = String(process.env.GIT_BACKEND || "").trim().toLowerCase();
   const updateRemoteUrl = resolveConfiguredUpdateRemoteUrl({
     env: process.env,
     projectRoot: context.projectRoot
   });
 
-  if (process.env.SPACE_GIT_BACKEND || gitClient.name !== "native") {
+  if ((requestedBackend && requestedBackend !== "auto") || gitClient.name !== "native") {
     console.log(`Using ${gitClient.label}.`);
   }
 

@@ -93,6 +93,36 @@ Important shared rules:
 - clustered workers perform the filesystem mutation locally, then commit changed logical paths back to the primary once before the response finishes
 - cross-worker follow-up freshness comes from `Space-State-Version` request or response fencing, not from waiting for every worker to acknowledge the write
 
+## Clustered Write Pressure
+
+The repeatable clustered-write benchmark lives at `tests/server_cluster_write_stress_test.mjs`.
+
+Use it when `space-serve-p` is the process consuming CPU under write-heavy clustered load. The harness can:
+
+- seed large temporary `L2/<user>/` trees before the write burst, including many synthetic user roots
+- drive concurrent `/api/file_write` requests through a single-process `--workers 1` baseline or multiple clustered workers
+- record initial startup and optional restart timings against the same seeded tree so large multi-user indexes can be compared against a 30-second startup window
+- pass `--watchdog false` to launch the same clustered runtime with `CUSTOMWARE_WATCHDOG=false`, which preserves startup indexing plus explicit worker mutation sync while disabling background `fs.watch`, config watching, and reconcile activity
+- report latency percentiles, throughput, and per-process CPU deltas for the clustered primary and workers
+- optionally capture the clustered primary CPU profile for the write window
+
+The expected hot path is primary-owned:
+
+- workers mutate the filesystem locally, then publish the changed logical paths once through the clustered mutation channel
+- the clustered primary handles that request in `server/runtime/cluster.js`, calls `watchdog.applyProjectPathChanges(...)`, and republishes the resulting state delta
+- the watchdog now narrows that sync to the exact changed path plus only the nearest affected or still-missing ancestor directories, patches the affected `file_index` shard entries, and then lets `state_system.js` clone and compare the replicated shard payloads for publication
+- ordinary file writes should stay exact-entry operations; subtree removal and recursive walks are reserved for directory sync, directory replacement, directory deletion, and full rescans
+- watcher cleanup belongs to deleted paths and directory syncs; ordinary file writes should not scan the directory-watcher map
+
+When throughput falls as seeded file count rises and the benchmark shows the primary near one full core while workers stay much lower, inspect that primary-side state rebuild path first. The main source files are `server/runtime/cluster.js`, `server/lib/file_watch/watchdog.js`, `server/lib/file_watch/state_shards.js`, and `server/runtime/state_system.js`.
+
+If `--watchdog false` produces nearly the same startup or write timings as `--watchdog true`, the bottleneck is not background watcher churn. It is usually the explicit primary-owned mutation path itself: parent-directory rescans inside `watchdog.js`, shard rebuild or patch work in `state_shards.js`, and replicated-state clone or compare work in `state_system.js`.
+
+Current optimization guidance:
+
+- if startup or restart is slow with many users, confirm `watchdog.js` is still using the one-pass full-reshard path rather than rebuilding each shard by rescanning the whole index
+- if writes are still primary-bound after that, the remaining costs are usually directory subtree resync inside `watchdog.js` and full shard object clone or compare work in `state_system.js`, not `fs.watch`
+
 ## User Folder Quotas
 
 `USER_FOLDER_SIZE_LIMIT_BYTES` optionally caps each on-disk `L2/<user>/` folder.
@@ -104,7 +134,7 @@ Current behavior:
 - `file_write`, `file_copy`, `file_move`, `file_delete`, and module removal through `file_access.js` check projected quota impact before mutation
 - if a user folder is at or below the limit, projected growth over the limit is rejected with `413`
 - if a user folder is already over the limit, only mutations with a negative net size delta for that folder are allowed
-- quota checks use cached per-user folder totals and per-operation deltas, so normal writes do not rescan the entire `L2/<user>/` tree
+- quota checks use cached per-user folder totals plus indexed per-operation deltas from `path_index` or `file_index` `sizeBytes` metadata, so normal writes do not rescan the entire `L2/<user>/` tree
 - other backend app-path mutation callers invalidate affected L2 cache entries through `recordAppPathMutations`, and Git history commits, rollback, and revert also invalidate affected entries because backend `.git` metadata can change outside the app-file mutation delta
 
 ## `file_paths`

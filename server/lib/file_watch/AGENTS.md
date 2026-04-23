@@ -30,6 +30,7 @@ Current rules:
 - `path_index` is required
 - directory entries in the path index use a trailing slash
 - `watchdog.js` is responsible for mapping those logical `/app/...` patterns onto repo `L0` plus the configured writable `CUSTOMWARE_PATH` roots for `L1` and `L2`
+- `CUSTOMWARE_WATCHDOG=true` keeps the live `fs.watch` layer, config-file watching, and the periodic reconcile backstop enabled; `false` still runs the startup scan and explicit `applyProjectPathChanges(...)` sync path but disables those background watch sources
 
 Current default handlers:
 
@@ -44,9 +45,11 @@ Current default handlers:
 - tracks every currently existing file and directory under the watched logical app tree
 - is the canonical fast lookup for file existence and listing
 - stores per-path metadata instead of booleans: directory flag, byte size, and last modified time
+- stays authoritative in `watchdog.js`; the `path_index` handler should reference that live map directly instead of cloning the full index on every incremental change
 - excludes `.git` directories and their contents so per-owner local history metadata is not exposed as app files and does not create watchdog churn
 - is replicated to workers as `file_index/<id>` shards such as `L0`, `L1/<group>`, and `L2/<user>`
 - request-time consumers that only need one ownership slice, such as module inheritance or user-scoped module listings, should read the relevant replicated `file_index` shards from shared state instead of scanning the full `path_index`
+- request-time quota helpers should reuse the same `sizeBytes` metadata for current `L2/<user>/` totals and subtree deltas instead of recursively walking user folders on disk
 
 `group_index`:
 
@@ -67,9 +70,15 @@ Rules:
 - treat the watchdog as the only authoritative writer of replicated filesystem-derived state shards
 - primary-owned watchdog state initializes its replicated version space from a long startup epoch when no snapshot version is provided, while replicas continue to trust the primary snapshot version they were bootstrapped with
 - exact logical-path mutation reports from workers and jobs plus `fs.watch` incremental sync are the normal freshness path; do not rely on a fast whole-tree reconcile for routine writes
+- worker or job mutation sync should hydrate the exact changed path plus only the ancestor directories whose metadata can change or whose entries are still missing; do not expand ordinary `L1` or `L2` file writes to the whole layer root
+- ordinary file updates should remove or upsert only the exact path-index entry; subtree removal is reserved for directory sync, directory replacement, directory deletion, and full rescans
+- watcher cleanup is only needed for deleted paths and directory syncs; ordinary file upserts must not scan the directory-watcher map
+- when `CUSTOMWARE_WATCHDOG=false`, those exact logical-path mutation reports remain the only freshness path inside the running process because `fs.watch`, config watching, and the reconcile timer are intentionally disabled
 - incremental `user_index` rebuilds rely on concrete changed auth or profile file paths, so mutation publishers must include `user.yaml`, `meta/password.json`, and `meta/logins.json` when those files are created or rewritten
 - periodic full rescans are a backstop for missed external or out-of-process changes, are scheduled from the previous run's completion time, default to 5 minutes, and may be disabled with `reconcileIntervalMs <= 0`
 - full rescans should rebuild indexes asynchronously and yield to the event loop so the primary stays responsive during larger walks
+- full rescans must build `file_index` shards in one pass over `path_index`, and incremental publishes should patch only the changed shard entries instead of rescanning the full index per shard
+- incremental publishes must derive affected file-index shard ids from changed project paths, not by scanning all of `currentPathIndex`
 - clustered worker replicas consume versioned snapshots and incremental state deltas from the primary watchdog owner
 - if a feature needs a new live derived view, add a handler plus config entry instead of manually wiring one-off logic in `server/app.js`
 

@@ -109,7 +109,8 @@ Rules:
 - when `CUSTOMWARE_GIT_HISTORY` is enabled, writable `L1` and `L2` file mutations schedule debounced per-owner Git history commits; in clustered runtime, worker writes defer that scheduling to the primary after it rebuilds the authoritative watchdog state for the changed logical paths
 - debounced owner-root history work must stay off the request path; local-history backends serialize operations per owner repository so primary-owned scheduling does not block the event loop or race the same repo, native keeps Git subprocess work asynchronous, and the isomorphic fallback reuses immutable history-entry and tree caches for repeated Time Travel reads
 - when `USER_FOLDER_SIZE_LIMIT_BYTES` is positive, `file_access.js` must check all app-file writes, copies, moves, and deletes through `user_quota.js` before mutation; projected growth over the cap is rejected, while a user folder already over cap may only perform mutations whose net `L2/<user>/` size delta is negative
-- user-folder quota accounting is cached per resolved `L2/<user>/` root and normal app-file mutations update that cache by byte deltas instead of rescanning the whole folder on every write; other backend app-path mutation callers invalidate the affected cache through `recordAppPathMutations`, and Git history commits, rollback, and revert also invalidate affected L2 quota cache entries because backend `.git` metadata can change outside the app-file mutation delta
+- user-folder quota accounting is cached per resolved `L2/<user>/` root; cache fills and subtree size reads should come from indexed `sizeBytes` metadata in the live `path_index` or replicated `file_index` shards instead of crawling the full user tree, while normal app-file mutations update that cache by byte deltas
+- other backend app-path mutation callers invalidate the affected cache through `recordAppPathMutations`, and Git history commits, rollback, and revert also invalidate affected L2 quota cache entries because backend `.git` metadata can change outside the app-file mutation delta
 
 `module_manage.js` is the canonical entry point for:
 
@@ -128,7 +129,7 @@ Module discovery rules:
 - normal override resolution should limit shard reads to readable `L0`, readable `L1`, and the authenticated user's `L2`
 - admin-only cross-user module listings may expand to selected `L2/<user>` shards or all replicated `L2/*` shards as needed, but should still stay shard-scoped instead of scanning the whole app index
 
-When `USER_FOLDER_SIZE_LIMIT_BYTES` is positive, first-time module installs into `L2/<user>/` must clone into a system temp directory first, measure that tree, and pass the quota projection before moving it into the user folder. Existing module updates still invalidate affected user quota cache entries after mutation because their final Git object growth is not known until the update completes.
+When `USER_FOLDER_SIZE_LIMIT_BYTES` is positive, first-time module installs into `L2/<user>/` must clone into a system temp directory first, measure that tree, and pass the quota projection before moving it into the user folder. Existing module updates still invalidate affected user quota cache entries after mutation because their final Git object growth is not known until the update completes, and the current cached user-root total should still come from indexed `file_index` metadata rather than a fresh disk crawl.
 
 Current module-list areas are:
 
@@ -142,7 +143,7 @@ Admin-only access is required for aggregated or cross-user user-layer listings.
 `git_history.js` is the canonical entry point for optional per-owner writable-layer history:
 
 - `CUSTOMWARE_GIT_HISTORY=false` disables automatic history scheduling, but the runtime parameter defaults to `true`
-- local-history client creation must pass resolved runtime params into `server/lib/git/local_history.js` so `GIT_BACKEND` can force `native`, `nodegit`, or `isomorphic`; `auto` keeps the shared fallback order
+- local-history client creation must pass resolved runtime params into `server/lib/git/local_history.js` so `GIT_BACKEND` can force `native` or `isomorphic`; `auto` keeps the shared fallback order
 - each writable `L1/<group>/` and `L2/<user>/` owner root may become its own local Git repository when history is enabled
 - file writes, deletes, copies, moves, auth/user writes, group writes, and module installs schedule a debounced commit for the affected owner root
 - in clustered runtime, workers must not keep their own owner-root Git commit debounces; they publish changed logical app paths once, and the primary schedules the debounced commit after `applyProjectPathChanges(...)` finishes rebuilding the authoritative indexes

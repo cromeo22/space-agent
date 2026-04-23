@@ -84,13 +84,13 @@ Parent and child split rules:
 - provide the outbound fetch proxy at `/api/proxy`
 - enforce auth, session, module, and app-file access boundaries
 - optionally maintain adaptive-debounced per-owner local Git history repositories for writable `L1/<group>/` and `L2/<user>/` roots when `CUSTOMWARE_GIT_HISTORY` is enabled
-- resolve server-owned Git operations such as local history and Git-backed module installs through the shared backend abstraction, with `GIT_BACKEND=auto` as the default fallback mode and optional forcing to `native`, `nodegit`, or `isomorphic`
+- resolve server-owned Git operations such as local history and Git-backed module installs through the shared backend abstraction, with `GIT_BACKEND=auto` as the default fallback mode and optional forcing to `native` or `isomorphic`
 - optionally enforce `USER_FOLDER_SIZE_LIMIT_BYTES` for each on-disk `L2/<user>/` folder through app-file mutation quota checks that use cached per-user size totals
 - run deterministic primary-owned periodic maintenance jobs from `server/jobs/` for backend-enforced cleanup such as guest-account pruning
 - keep the backend-only auth secrets outside the logical app tree, using shared environment injection via `SPACE_AUTH_PASSWORD_SEAL_KEY` and `SPACE_AUTH_SESSION_HMAC_KEY` plus local gitignored fallback storage under `server/data/` by default or `SPACE_AUTH_DATA_DIR` when that override is set; `userCrypto` also keeps a local backend-share cache there, while the shared `L2/<username>/meta/user_crypto.json` record carries a backend-sealed share copy for multi-instance recovery
 - manage `server/tmp/` as janitor-backed transient storage for low-RAM server-side artifacts such as folder-download archives
 - resolve runtime parameters from launch overrides, stored `.env` values, process environment variables, and schema defaults, including backend storage parameters such as `CUSTOMWARE_PATH`, password-login gating through `LOGIN_ALLOWED`, and hosted-share receiver settings through `CLOUD_SHARE_ALLOWED` plus `CLOUD_SHARE_URL`
-- when `WORKERS>1`, run a clustered primary-plus-worker runtime where the primary owns authoritative shared state and the live watchdog while workers serve HTTP in parallel
+- when `WORKERS>1`, run a clustered primary-plus-worker runtime where the primary owns authoritative shared state and the live watchdog while workers serve HTTP in parallel; `CUSTOMWARE_WATCHDOG=false` keeps that primary-owned startup scan and explicit mutation sync path but disables background `fs.watch`, config watching, and the periodic reconcile loop
 - expose distinct OS process titles for operator visibility: `space-serve` for single-process runtime, `space-serve-p` for clustered primary, and `space-serve-w<N>` for clustered workers
 - expose `frontend_exposed` runtime parameters to page shells as injected meta tags
 - expose the resolved project version string to page shells that declare the `SPACE_PROJECT_VERSION` placeholder, using `server/lib/utils/project_version.js` as the shared resolver
@@ -142,6 +142,8 @@ Core runtime contracts:
 - password verifiers remain in `L2/<username>/meta/password.json`, but the SCRAM verifier is sealed with a backend-held key so the file is no longer self-sufficient
 - per-user wrapped browser-encryption state may also live in `L2/<username>/meta/user_crypto.json`; that record now includes a backend-sealed server-share envelope for multi-instance recovery, while a local backend-share cache may also live under `server/data/user_crypto/` or the matching `SPACE_AUTH_DATA_DIR/user_crypto/` override path; the plaintext share is never stored in the app tree
 - `WORKERS` defaults to `1`; when it is greater than `1`, the runtime forks HTTP workers, keeps the primary as the authoritative watchdog and unified state owner, lets workers perform normal request work and filesystem mutations locally, requires workers to publish the exact changed logical app paths back to the primary once, and publishes versioned state deltas or snapshots back out from the primary after those mutations commit; worker-owned writes and primary-owned jobs use that explicit mutation path as the normal freshness mechanism, the same primary post-rebuild path schedules any debounced writable-layer Git history commits, and the watchdog's full-tree reconcile remains an infrequent completion-anchored backstop for missed external or CLI changes
+- that primary mutation path should rescan only the exact changed path plus the nearest affected or still-missing ancestor directories, then patch just the affected `file_index` shard entries before broadcasting the delta; do not widen routine `L1` or `L2` writes to a whole-layer rebuild
+- `CUSTOMWARE_WATCHDOG` defaults to `true`; setting it to `false` disables background `fs.watch` listeners, config-file watching, and the periodic reconcile backstop while preserving startup indexing plus the explicit worker or job mutation-sync path used by clustered writes and CLI or backend changes
 - primary-owned background jobs also run only on that authoritative runtime owner: the lone server process when `WORKERS=1`, or the clustered primary when `WORKERS>1`
 - responses expose `Space-State-Version` and `Space-Worker`; requests may send `Space-State-Version` as a required minimum replicated version, browser helpers keep the latest floor in per-tab `sessionStorage` plus a short-lived same-origin `space_state_version` cookie for redirect handoffs, and the router may briefly wait for worker catch-up before handling the request
 - runtime auth may switch to a single-user mode where every request resolves to the implicit `user` principal
@@ -170,10 +172,10 @@ The server relies on a small set of shared infrastructure contracts. Do not re-i
 - request-time worker code should consume replicated shared-state shards derived from those indexes instead of depending on watchdog-specific scanning helpers; the watchdog remains the primary-owned producer of those shards
 - the watchdog's normal freshness path is exact logical-path commits plus `fs.watch` incremental sync; full-tree reconciles are a rare completion-anchored backstop rather than a fixed-rate polling loop
 - `server/lib/customware/file_access.js` is the canonical entry point for authenticated app-file list, read, write, delete, copy, move, and info operations
-- `server/lib/customware/user_quota.js` is the canonical per-user folder-size quota helper; callers must enforce quota through shared app-file mutation helpers instead of adding endpoint-local size checks
+- `server/lib/customware/user_quota.js` is the canonical per-user folder-size quota helper; callers must enforce quota through shared app-file mutation helpers instead of adding endpoint-local size checks, and current-size reads should come from indexed `path_index` or replicated `file_index` metadata rather than ad hoc disk crawls
 - file listing and pattern discovery may be filtered to writable paths through the shared file-access helper, and Git repository discovery returns writable owner roots without exposing `.git` metadata
 - `server/lib/customware/git_history.js` is the canonical entry point for optional per-owner writable-layer Git history and rollback, including L2 auth-file ignore and rollback preservation rules
-- `server/lib/git/` owns Git backend selection for source-checkout update flows, Git-backed module installs, and local-history clients; server runtime param `GIT_BACKEND` defaults to `auto` and may force `native`, `nodegit`, or `isomorphic`
+- `server/lib/git/` owns Git backend selection for source-checkout update flows, Git-backed module installs, and local-history clients; server runtime param `GIT_BACKEND` defaults to `auto` and may force `native` or `isomorphic`
 - `server/lib/share/service.js` is the canonical hosted-share helper for backend-owned ZIP storage under `CUSTOMWARE_PATH/share/spaces/`, archive validation, authenticated imports, and guest-clone session issuance; endpoints and page shells must not duplicate that logic
 - `server/lib/tmp/` owns the canonical `server/tmp/` janitor and disk-backed archive creation for streamed folder downloads
 - `server/lib/customware/module_inheritance.js` and `server/lib/customware/extension_overrides.js` are the canonical module and extension resolution helpers
@@ -195,6 +197,7 @@ Infrastructure rules:
 - keep group and user access state derived from `group_index` and `user_index`, not re-parsed per request
 - keep file-list and path-discovery work index-backed instead of walking the filesystem ad hoc
 - commit indexed filesystem, group, or auth mutations through the shared watchdog mutation path so the primary publishes versioned state updates to every worker replica
+- keep startup and restart indexing linear in the tracked tree size by building file-index shards in one pass over `path_index`, not one full index scan per shard
 - keep periodic full rescans rare and completion-anchored, and route any unavoidable backstop rebuild through the shared yielding reconcile path instead of adding new synchronous polling loops
 
 ## API Contract

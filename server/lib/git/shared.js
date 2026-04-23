@@ -3,7 +3,7 @@ import { promises as fsPromises } from "node:fs";
 import path from "node:path";
 
 export const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
-export const SUPPORTED_GIT_BACKENDS = new Set(["native", "nodegit", "isomorphic"]);
+export const SUPPORTED_GIT_BACKENDS = new Set(["native", "isomorphic"]);
 export const RUNTIME_GIT_BACKEND_PARAM = "GIT_BACKEND";
 
 export function createAvailableBackendResult(name, client) {
@@ -112,13 +112,6 @@ export function resolveRequestedGitBackend(options = {}) {
     return normalizeBackendName(env[RUNTIME_GIT_BACKEND_PARAM], {
       allowAuto: true,
       sourceLabel: RUNTIME_GIT_BACKEND_PARAM
-    });
-  }
-
-  if (env && Object.prototype.hasOwnProperty.call(env, "SPACE_GIT_BACKEND")) {
-    return normalizeBackendName(env.SPACE_GIT_BACKEND, {
-      allowAuto: true,
-      sourceLabel: "SPACE_GIT_BACKEND"
     });
   }
 

@@ -24,6 +24,12 @@ CUSTOMWARE_PATH:
   allowed: ["*"]
   default: ""
   frontend_exposed: false
+CUSTOMWARE_WATCHDOG:
+  description: Enable live customware fs.watch listeners, config watching, and the periodic reconcile backstop. Set to false to keep startup indexing and explicit mutation sync but disable background watch activity.
+  type: boolean
+  allowed: [true, false]
+  default: true
+  frontend_exposed: false
 SINGLE_USER_APP:
   description: Run the app as a single always-authenticated user named user with implicit _admin access.
   type: boolean
@@ -63,7 +69,7 @@ CUSTOMWARE_GIT_HISTORY:
 GIT_BACKEND:
   description: Git backend used by server-owned Git flows such as local history and module installs. Set to auto for normal fallback selection.
   type: text
-  allowed: [auto, native, nodegit, isomorphic]
+  allowed: [auto, native, isomorphic]
   default: auto
   frontend_exposed: false
 GIT_URL:

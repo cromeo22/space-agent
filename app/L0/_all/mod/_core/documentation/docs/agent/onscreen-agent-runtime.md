@@ -22,7 +22,7 @@ This doc covers the floating routed overlay agent as a frontend runtime surface.
 
 - the routed overlay adapter in the router overlay seam
 - the floating shell UI and compact bubble UI
-- chat history, overlay config persistence, and browser-stored overlay UI state
+- chat history, overlay config persistence, and owner-tagged browser UI state
 - prompt assembly and prompt history previews
 - the overlay-specific prompt builders layered on top of the shared `_core/agent_prompt/prompt-runtime.js` lifecycle
 - attachment handling
@@ -58,6 +58,9 @@ Important browser UI state fields:
 - optional `hidden_edge`
 - optional `history_height`
 - `display_mode`
+- `owner`
+
+Avatar movement, edge-hide changes, compact/full mode changes, viewport re-clamps, and history-height resize persist only to that browser UI state payload. They must not rewrite `~/conf/onscreen-agent.yaml`; the config file is rewritten only when persisted LLM settings or custom instructions change.
 
 Current defaults:
 
@@ -69,7 +72,7 @@ Current defaults:
 - params: `temperature: 0.2`
 - max tokens: `120000`
 - display mode: `compact`
-- first run with no `~/conf/onscreen-agent.yaml`: start with the compact avatar-plus-chat box horizontally centered, with its bottom edge targeting whichever is lower on screen: `7em` above the viewport bottom or `90%` of viewport height, instead of restoring browser-global position state
+- first run with no `~/conf/onscreen-agent.yaml` and no matching owner-tagged browser UI state: start with the compact avatar-plus-chat box horizontally centered, with its bottom edge targeting whichever is lower on screen: `7em` above the viewport bottom or `90%` of viewport height, instead of restoring browser-global position state
 
 ## Runtime Surface
 

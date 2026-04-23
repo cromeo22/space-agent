@@ -16,6 +16,7 @@ import {
 import {
   applyUserFolderQuotaPlan,
   createUserFolderQuotaPlan,
+  getIndexedProjectPathSize,
   invalidateUserFolderSizeCacheForProjectPaths,
   readAbsolutePathSize
 } from "./user_quota.js";
@@ -409,7 +410,9 @@ function createQuotaPlan(options = {}, deltas = []) {
   return createUserFolderQuotaPlan(
     {
       projectRoot: options.projectRoot,
-      runtimeParams: options.runtimeParams
+      runtimeParams: options.runtimeParams,
+      stateSystem: options.stateSystem,
+      watchdog: options.watchdog
     },
     deltas
   );
@@ -425,25 +428,46 @@ function invalidateQuotaDeltas(options = {}, deltas = []) {
   );
 }
 
-function getWriteQuotaDeltas(requests) {
+function getIndexedOrAbsolutePathSize(options = {}, projectPath, absolutePath) {
+  const indexedSize = getIndexedProjectPathSize(
+    {
+      stateSystem: options.stateSystem,
+      watchdog: options.watchdog
+    },
+    projectPath
+  );
+
+  return indexedSize === null ? readAbsolutePathSize(absolutePath) : indexedSize;
+}
+
+function getWriteQuotaDeltas(options = {}, requests) {
   return requests.map((request) => ({
     deltaBytes: request.isDirectory
       ? 0
-      : request.buffer.length - readAbsolutePathSize(request.absolutePath),
+      : request.buffer.length -
+        getIndexedOrAbsolutePathSize(options, request.projectPath, request.absolutePath),
     projectPath: request.projectPath
   }));
 }
 
-function getCopyQuotaDeltas(requests) {
+function getCopyQuotaDeltas(options = {}, requests) {
   return requests.map((request) => ({
-    deltaBytes: readAbsolutePathSize(request.sourceAbsolutePath),
+    deltaBytes: getIndexedOrAbsolutePathSize(
+      options,
+      request.sourceProjectPath,
+      request.sourceAbsolutePath
+    ),
     projectPath: request.destinationProjectPath
   }));
 }
 
-function getMoveQuotaDeltas(requests) {
+function getMoveQuotaDeltas(options = {}, requests) {
   return requests.flatMap((request) => {
-    const movedBytes = readAbsolutePathSize(request.sourceAbsolutePath);
+    const movedBytes = getIndexedOrAbsolutePathSize(
+      options,
+      request.sourceProjectPath,
+      request.sourceAbsolutePath
+    );
 
     if (request.sourceProjectPath === request.destinationProjectPath) {
       return [
@@ -467,9 +491,9 @@ function getMoveQuotaDeltas(requests) {
   });
 }
 
-function getDeleteQuotaDeltas(requests) {
+function getDeleteQuotaDeltas(options = {}, requests) {
   return requests.map((request) => ({
-    deltaBytes: -readAbsolutePathSize(request.absolutePath),
+    deltaBytes: -getIndexedOrAbsolutePathSize(options, request.projectPath, request.absolutePath),
     projectPath: request.projectPath
   }));
 }
@@ -954,7 +978,7 @@ function normalizeWriteRequests(options = {}) {
 
 function writeAppFiles(options = {}) {
   const requests = normalizeWriteRequests(options);
-  const quotaDeltas = getWriteQuotaDeltas(requests);
+  const quotaDeltas = getWriteQuotaDeltas(options, requests);
   const quotaPlan = createQuotaPlan(options, quotaDeltas);
   let totalBytesWritten = 0;
 
@@ -1182,7 +1206,7 @@ function moveAbsolutePath(sourceAbsolutePath, destinationAbsolutePath, isDirecto
 
 function copyAppPaths(options = {}) {
   const requests = normalizeTransferRequests(options, "copy");
-  const quotaDeltas = getCopyQuotaDeltas(requests);
+  const quotaDeltas = getCopyQuotaDeltas(options, requests);
   const quotaPlan = createQuotaPlan(options, quotaDeltas);
   let entries;
 
@@ -1223,7 +1247,7 @@ function copyAppPath(options = {}) {
 
 function moveAppPaths(options = {}) {
   const requests = normalizeTransferRequests(options, "move");
-  const quotaDeltas = getMoveQuotaDeltas(requests);
+  const quotaDeltas = getMoveQuotaDeltas(options, requests);
   const quotaPlan = createQuotaPlan(options, quotaDeltas);
   let entries;
 
@@ -1341,7 +1365,7 @@ function normalizeDeleteRequests(options = {}) {
 
 function deleteAppPaths(options = {}) {
   const requests = normalizeDeleteRequests(options);
-  const quotaDeltas = getDeleteQuotaDeltas(requests);
+  const quotaDeltas = getDeleteQuotaDeltas(options, requests);
   const quotaPlan = createQuotaPlan(options, quotaDeltas);
   let paths;
 

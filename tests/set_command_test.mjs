@@ -36,8 +36,9 @@ test("runtime params schema exposes GIT_BACKEND with auto default", async () => 
 
   assert.ok(spec);
   assert.equal(spec.defaultValue, "auto");
-  assert.deepEqual(spec.allowed, ["auto", "native", "nodegit", "isomorphic"]);
-  assert.equal(validateConfigValue(spec, "nodegit"), "nodegit");
+  assert.deepEqual(spec.allowed, ["auto", "native", "isomorphic"]);
+  assert.equal(validateConfigValue(spec, "native"), "native");
+  assert.equal(validateConfigValue(spec, "isomorphic"), "isomorphic");
   assert.throws(() => {
     validateConfigValue(spec, "unsupported");
   }, /GIT_BACKEND must match one of/);
@@ -47,13 +48,13 @@ test("runtime params and env resolve requested git backend", async () => {
   const runtimeParams = await createRuntimeParams("/workspace/agent-one", {
     env: {},
     overrides: {
-      GIT_BACKEND: "nodegit"
+      GIT_BACKEND: "native"
     },
     storedValues: {}
   });
 
-  assert.equal(resolveRequestedGitBackend({ runtimeParams }), "nodegit");
-  assert.equal(resolveRequestedGitBackend({ backendName: undefined, runtimeParams }), "nodegit");
+  assert.equal(resolveRequestedGitBackend({ runtimeParams }), "native");
+  assert.equal(resolveRequestedGitBackend({ backendName: undefined, runtimeParams }), "native");
 
   const autoRuntimeParams = await createRuntimeParams("/workspace/agent-one", {
     env: {},
@@ -63,7 +64,7 @@ test("runtime params and env resolve requested git backend", async () => {
 
   assert.equal(
     resolveRequestedGitBackend({
-      env: { SPACE_GIT_BACKEND: "isomorphic" },
+      env: { GIT_BACKEND: "isomorphic" },
       runtimeParams: autoRuntimeParams
     }),
     "isomorphic"

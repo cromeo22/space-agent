@@ -51,7 +51,7 @@ This module owns:
 - `llm.js` owns LLM-facing system-prompt file loading, optional example-message construction, auto-loaded and runtime-loaded skill injection into system or transient prompt context, runtime system-prompt assembly, the surface-specific prepared-prompt builders layered on top of shared `_core/agent_prompt/prompt-runtime.js`, separate transient-message construction, final request assembly, history-compaction prompt loading, and the model-facing JS extension seams
 - `api.js` owns chat transport, HTTP error handling, streaming response parsing, the shared `OnscreenAgentLlmClient` superclass plus provider subclasses for OpenAI-compatible API streaming and local Hugging Face streaming, and the API-request preparation seam `prepareOnscreenAgentApiRequest`; prompt-shaping logic lives in `llm.js`
 - `llm-params.js` delegates YAML parsing to the shared framework `js/yaml-lite.js` utility but still enforces the overlay-specific top-level `key: value` params contract
-- `config.js` and `storage.js`: persisted settings, browser-stored overlay UI state, and history
+- `config.js` and `storage.js`: persisted settings, owner-tagged browser UI state, and history
 - `prompts/`: shipped prompt files and prompt-local documentation
 - the `space.onscreenAgent` runtime namespace for overlay display control and externally triggered prompt submission
 
@@ -88,14 +88,16 @@ Current browser UI state fields include:
 - optional `hidden_edge`
 - optional `history_height`
 - `display_mode`
+- `owner`
 
 Legacy compatibility:
 
 - `display_mode` is the canonical persisted mode field for browser UI state
+- browser UI state writes are owner-tagged with the current username and must stay browser-local; avatar moves, edge-hide changes, compact/full mode changes, viewport re-clamps, and history-height resizes must not rewrite `~/conf/onscreen-agent.yaml`
 - browser UI state loads from `sessionStorage` first, then `localStorage`, then legacy config fields as a migration fallback when browser storage is still empty
 - `storage.js` still accepts legacy `collapsed` values when older browser state or configs are loaded
 - `storage.js` also normalizes numeric coordinate scalars before the overlay store applies `agent_x` and `agent_y`, and it normalizes `hidden_edge` through the shared config helper before the store trusts the peeking state
-- when `~/conf/onscreen-agent.yaml` is missing, `storage.js` treats that load as first-run state instead of restoring browser-global overlay position data, and `store.js` places the visible compact overlay box with its full width centered while its bottom edge targets whichever is lower on screen: `7em` above the viewport bottom or `90%` of viewport height before the first persistence write
+- when `~/conf/onscreen-agent.yaml` is missing, `storage.js` may restore only browser UI state whose `owner` matches the current username; otherwise it treats that load as first-run state instead of restoring browser-global overlay position data, and `store.js` places the visible compact overlay box with its full width centered while its bottom edge targets whichever is lower on screen: `7em` above the viewport bottom or `90%` of viewport height before the first UI-state write
 - when config is rewritten, overlay position and display state fields must not be written back into `~/conf/onscreen-agent.yaml`
 
 Current defaults:
@@ -236,7 +238,7 @@ Current overlay behavior:
 - while hidden on an edge, dragging should keep the astronaut attached to that edge until the pointer crosses back past the in-screen reveal threshold; a click on the hidden astronaut should slide it back to that threshold position and restore the previously active compact or full chat body
 - the full-mode history subtree mounts only in full mode; compact mode does not keep a history container mounted
 - the full-mode history uses a non-scrolling outer shell for placement, chrome, and the resize grip, with an inner scroller that owns thread overflow
-- in full mode, the history panel can be resized vertically from a full-width invisible handle that straddles the outer top or bottom border based on orientation, while a centered grip marks the draggable edge and the chosen height persists in config
+- in full mode, the history panel can be resized vertically from a full-width invisible handle that straddles the outer top or bottom border based on orientation, while a centered grip marks the draggable edge and the chosen height persists in browser UI state
 - when that full-mode history is rendered above the avatar, its fitted or resized height must reserve the active fixed top-shell chrome instead of shrinking only against the raw viewport top; `store.js` should prefer the rendered onscreen-menu bar bottom and keep the usual top breathing room so the history starts compressing before it collides with the fixed menu bar
 - compact-to-full and full-to-compact switches should animate at the shell chrome layer: `store.js` owns a short display-mode transition phase, while `onscreen-agent.css` animates body width, panel chrome, and full-mode history entry so the overlay expands or settles instead of snapping; the collapse animation should keep the compact composer anchored and at its final scale instead of introducing a late positional or size snap when the phase clears
 - when full mode mounts or the viewport changes, the store keeps the raw persisted history height instead of rewriting it to the current viewport fit; the rendered height is clamped against the currently available space on that side so reloads preserve the chosen size while smaller screens still fit

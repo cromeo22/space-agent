@@ -1,15 +1,13 @@
 import { createIsomorphicGitHistoryClient } from "./isomorphic_handler.js";
 import { createNativeGitHistoryClient } from "./native_handler.js";
-import { createNodeGitHistoryClient } from "./nodegit_handler.js";
 import { COMMIT_HASH_PATTERN, resolveRequestedGitBackend } from "./shared.js";
 
 const HISTORY_BACKEND_FACTORIES = {
   native: createNativeGitHistoryClient,
-  nodegit: createNodeGitHistoryClient,
   isomorphic: createIsomorphicGitHistoryClient
 };
 
-const DEFAULT_HISTORY_BACKEND_ORDER = ["native", "nodegit", "isomorphic"];
+const DEFAULT_HISTORY_BACKEND_ORDER = ["native", "isomorphic"];
 const REQUIRED_HISTORY_METHODS = [
   "ensureRepository",
   "commitAll",

@@ -58,7 +58,7 @@ Current contract:
 - app-file writes still default to replacement, but `file_write` also supports append, prepend, and text insert anchors; insert uses a 1-based line insertion point or the first literal `before` or `after` match and requires `utf8`
 - projected growth over the cap is rejected
 - when a user folder is already over cap, only mutations that reduce that folder's net byte size are allowed
-- quota accounting is cached per resolved L2 owner root and updated by mutation deltas instead of rescanning on every write
+- quota accounting is cached per resolved L2 owner root, and both current totals and subtree deltas should come from indexed `sizeBytes` metadata in the live `path_index` or replicated `file_index` shards instead of rescanning user folders on disk during normal runtime
 - other backend app-path mutation callers invalidate affected user quota cache entries through `recordAppPathMutations`, and Git history operations invalidate the affected cache when `.git` metadata may have changed
 - clustered workers still perform the filesystem mutation locally, but they must publish the exact changed logical paths back to the primary so quota, user, and group derived state stays aligned across workers; those direct path reports are the normal freshness path, while the watchdog's full reconcile is only an infrequent completion-anchored backstop for missed external or CLI changes
 
@@ -69,7 +69,7 @@ Current contract:
 Current contract:
 
 - the parameter defaults to `true`
-- `GIT_BACKEND` defaults to `auto` for local history and other server-owned Git flows; `auto` keeps the shared `native -> nodegit -> isomorphic` fallback order, while concrete values force one backend for local testing or troubleshooting
+- `GIT_BACKEND` defaults to `auto` for local history and other server-owned Git flows; `auto` keeps the shared `native -> isomorphic` fallback order, while concrete values force one backend for local testing or troubleshooting
 - each writable `L1/<group>/` and `L2/<user>/` root is its own local Git repository when history is enabled
 - mutations schedule a commit after 10 seconds of quiet for that owner root
 - in clustered runtime, workers do not keep their own debounced Git commit timers; they publish changed logical paths once, and the primary schedules the owner-root commit after rebuilding the authoritative indexes for that change

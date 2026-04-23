@@ -6,11 +6,11 @@ export default class PathIndexHandler extends WatchdogHandler {
   }
 
   async onStart(context) {
-    this.state = context.getCurrentPathIndex();
+    this.state = context.peekCurrentPathIndex();
   }
 
   async onChanges(context) {
-    this.state = context.getCurrentPathIndex();
+    this.state = context.peekCurrentPathIndex();
   }
 
   restoreState(state) {

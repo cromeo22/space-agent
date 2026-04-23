@@ -12,14 +12,14 @@ import { parseSimpleYaml } from "../../../app/L0/_all/mod/_core/framework/js/yam
 import { createStateSystem } from "../../runtime/state_system.js";
 import {
   FILE_INDEX_AREA,
-  buildFileIndexShardValue,
+  buildFileIndexShards,
   buildGroupIndexShardChanges,
   buildUserIndexShardChanges,
   collectAffectedUsernames,
-  collectFileIndexShardIds,
   collectFileIndexShardIdsFromProjectPaths,
   createRuntimeGroupIndexFromAreas,
   createRuntimeUserIndexFromAreas,
+  getFileIndexShardId,
   hasGroupConfigChange
 } from "./state_shards.js";
 
@@ -27,6 +27,7 @@ const REFRESH_DEBOUNCE_MS = 75;
 const FULL_SCAN_YIELD_INTERVAL_MS = 8;
 const RECONCILE_INTERVAL_MS = 5 * 60_000;
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const CUSTOMWARE_WATCHDOG_PARAM = "CUSTOMWARE_WATCHDOG";
 
 export class WatchdogHandler {
   constructor(options = {}) {
@@ -168,6 +169,29 @@ function getStatsSignature(stats) {
   }
 
   return `${Math.trunc(stats.mtimeMs)}:${stats.size}`;
+}
+
+function isCustomwareWatchdogEnabled(runtimeParams) {
+  const rawValue =
+    runtimeParams && typeof runtimeParams.get === "function"
+      ? runtimeParams.get(CUSTOMWARE_WATCHDOG_PARAM, true)
+      : true;
+
+  if (typeof rawValue === "boolean") {
+    return rawValue;
+  }
+
+  const normalized = String(rawValue ?? "").trim().toLowerCase();
+
+  if (!normalized) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return true;
 }
 
 function clonePathIndex(pathIndex = Object.create(null)) {
@@ -524,8 +548,45 @@ async function loadConfiguredHandlers(handlerDir, handlerConfigs, projectRoot, r
   return configuredHandlers;
 }
 
-function expandProjectSyncTargets(projectPaths = []) {
-  const expandedTargets = new Set();
+function listProjectAncestorDirectories(projectPath = "") {
+  const normalizedProjectPath = normalizeProjectPath(projectPath, {
+    isDirectory: String(projectPath || "").endsWith("/")
+  });
+
+  if (!normalizedProjectPath) {
+    return [];
+  }
+
+  const segments = stripTrailingSlash(normalizedProjectPath).split("/").filter(Boolean);
+  const ancestors = [];
+
+  for (let segmentCount = segments.length - 1; segmentCount >= 2; segmentCount -= 1) {
+    ancestors.push(`/${segments.slice(0, segmentCount).join("/")}/`);
+  }
+
+  return ancestors;
+}
+
+function collectProjectSyncTargets(projectPaths = [], currentPathIndex = Object.create(null)) {
+  const syncTargets = new Map();
+
+  function addSyncTarget(projectPath, metadataOnly = false) {
+    const normalizedProjectPath = normalizeProjectPath(projectPath, {
+      isDirectory: String(projectPath || "").endsWith("/")
+    });
+
+    if (!normalizedProjectPath) {
+      return;
+    }
+
+    const existingMode = syncTargets.get(normalizedProjectPath);
+
+    if (existingMode === false) {
+      return;
+    }
+
+    syncTargets.set(normalizedProjectPath, Boolean(metadataOnly));
+  }
 
   for (const projectPath of Array.isArray(projectPaths) ? projectPaths : []) {
     const normalizedProjectPath = normalizeProjectPath(projectPath, {
@@ -536,16 +597,21 @@ function expandProjectSyncTargets(projectPaths = []) {
       continue;
     }
 
-    expandedTargets.add(normalizedProjectPath);
+    addSyncTarget(normalizedProjectPath, false);
 
-    const segments = stripTrailingSlash(normalizedProjectPath).split("/").filter(Boolean);
+    for (const ancestorPath of listProjectAncestorDirectories(normalizedProjectPath)) {
+      addSyncTarget(ancestorPath, true);
 
-    for (let segmentCount = segments.length - 1; segmentCount >= 2; segmentCount -= 1) {
-      expandedTargets.add(`/${segments.slice(0, segmentCount).join("/")}/`);
+      if (currentPathIndex[ancestorPath]) {
+        break;
+      }
     }
   }
 
-  return [...expandedTargets];
+  return [...syncTargets.entries()].map(([projectPath, metadataOnly]) => ({
+    metadataOnly,
+    projectPath
+  }));
 }
 
 export function createWatchdog(options = {}) {
@@ -555,6 +621,10 @@ export function createWatchdog(options = {}) {
   const handlerDir = path.resolve(options.handlerDir || path.join(CURRENT_DIR, "handlers"));
   const reconcileIntervalMs = Number(options.reconcileIntervalMs ?? RECONCILE_INTERVAL_MS);
   const watchConfig = options.watchConfig !== false;
+  const liveWatchEnabled =
+    options.liveWatchEnabled === undefined
+      ? isCustomwareWatchdogEnabled(runtimeParams)
+      : Boolean(options.liveWatchEnabled);
   const replica = options.replica === true;
   const initialSnapshot = options.initialSnapshot || null;
   const stateSystem =
@@ -816,7 +886,13 @@ export function createWatchdog(options = {}) {
     return cachedGroupIndex;
   }
 
-  function removeCurrentEntries(projectPath) {
+  function markChangedProjectPath(changedProjectPaths, projectPath) {
+    if (changedProjectPaths && projectPath) {
+      changedProjectPaths.add(projectPath);
+    }
+  }
+
+  function removeCurrentEntries(projectPath, changedProjectPaths = null) {
     const normalizedBase = stripTrailingSlash(normalizeProjectPath(projectPath));
 
     if (!normalizedBase) {
@@ -830,8 +906,25 @@ export function createWatchdog(options = {}) {
 
       if (existingBase === normalizedBase || existingBase.startsWith(`${normalizedBase}/`)) {
         delete currentPathIndex[existingPath];
+        markChangedProjectPath(changedProjectPaths, existingPath);
         changed = true;
       }
+    }
+
+    return changed;
+  }
+
+  function removeCurrentEntry(projectPath, changedProjectPaths = null) {
+    let changed = false;
+
+    for (const candidatePath of getProjectPathLookupCandidates(projectPath)) {
+      if (!candidatePath || !(candidatePath in currentPathIndex)) {
+        continue;
+      }
+
+      delete currentPathIndex[candidatePath];
+      markChangedProjectPath(changedProjectPaths, candidatePath);
+      changed = true;
     }
 
     return changed;
@@ -867,7 +960,7 @@ export function createWatchdog(options = {}) {
     };
   }
 
-  function upsertCurrentEntry(absolutePath, entryOptions = {}) {
+  function upsertCurrentEntry(absolutePath, entryOptions = {}, changedProjectPaths = null) {
     const record = resolvePathIndexRecord(absolutePath, entryOptions);
 
     if (!record) {
@@ -875,7 +968,7 @@ export function createWatchdog(options = {}) {
     }
 
     if (!record.entry) {
-      return removeCurrentEntries(record.projectPath);
+      return removeCurrentEntries(record.projectPath, changedProjectPaths);
     }
 
     const existingEntry = currentPathIndex[record.projectPath];
@@ -885,6 +978,7 @@ export function createWatchdog(options = {}) {
     }
 
     currentPathIndex[record.projectPath] = record.entry;
+    markChangedProjectPath(changedProjectPaths, record.projectPath);
     return true;
   }
 
@@ -1096,6 +1190,9 @@ export function createWatchdog(options = {}) {
       getCurrentPathIndex() {
         return clonePathIndex(currentPathIndex);
       },
+      peekCurrentPathIndex() {
+        return currentPathIndex;
+      },
       getCurrentPaths() {
         return getCurrentPaths();
       },
@@ -1176,7 +1273,7 @@ export function createWatchdog(options = {}) {
   }
 
   function schedulePathSync(targetPath) {
-    if (replica || hasIgnoredPathSegment(targetPath)) {
+    if (replica || !liveWatchEnabled || hasIgnoredPathSegment(targetPath)) {
       return;
     }
 
@@ -1195,7 +1292,7 @@ export function createWatchdog(options = {}) {
   }
 
   function watchDirectory(directoryPath) {
-    if (replica || directoryWatchers.has(directoryPath)) {
+    if (replica || !liveWatchEnabled || directoryWatchers.has(directoryPath)) {
       return;
     }
 
@@ -1243,11 +1340,12 @@ export function createWatchdog(options = {}) {
     }
   }
 
-  function syncAbsolutePath(targetPath) {
+  function syncAbsolutePath(targetPath, options = {}) {
     if (hasIgnoredPathSegment(targetPath)) {
       return false;
     }
 
+    const changedProjectPaths = options.changedProjectPaths || null;
     const stats = tryStat(targetPath);
 
     if (!stats) {
@@ -1258,24 +1356,27 @@ export function createWatchdog(options = {}) {
         runtimeParams
       );
       removeDirectoryWatchersUnder(targetPath);
-      return removeCurrentEntries(deletedPath.projectPath);
+      return removeCurrentEntries(deletedPath.projectPath, changedProjectPaths);
     }
 
     const projectPath = toProjectPath(projectRoot, targetPath, {
       isDirectory: stats.isDirectory(),
       runtimeParams
     });
-    let changed = removeCurrentEntries(projectPath);
 
     if (stats.isDirectory()) {
+      let changed = removeCurrentEntries(projectPath, changedProjectPaths);
+
       if (!replica) {
-        watchDirectoryTree(targetPath);
+        if (liveWatchEnabled) {
+          watchDirectoryTree(targetPath);
+        }
       }
 
       changed = upsertCurrentEntry(targetPath, {
         isDirectory: true,
         stats
-      }) || changed;
+      }, changedProjectPaths) || changed;
 
       const directories = new Set();
       walkDirectories(targetPath, directories);
@@ -1283,21 +1384,70 @@ export function createWatchdog(options = {}) {
         changed =
           upsertCurrentEntry(directoryPath, {
             isDirectory: true
-          }) || changed;
+          }, changedProjectPaths) || changed;
       });
 
       walkFiles(targetPath, (filePath) => {
-        changed = upsertCurrentEntry(filePath) || changed;
+        changed = upsertCurrentEntry(filePath, {}, changedProjectPaths) || changed;
       });
 
       return changed;
     }
 
-    removeDirectoryWatchersUnder(targetPath);
+    const directoryProjectPath = normalizeProjectPath(projectPath, {
+      isDirectory: true
+    });
+    const changed = currentPathIndex[directoryProjectPath]
+      ? removeCurrentEntries(directoryProjectPath, changedProjectPaths)
+      : removeCurrentEntry(projectPath, changedProjectPaths);
+
     return upsertCurrentEntry(targetPath, {
       isDirectory: false,
       stats
-    }) || changed;
+    }, changedProjectPaths) || changed;
+  }
+
+  function syncMetadataOnlyPath(targetPath, options = {}) {
+    if (hasIgnoredPathSegment(targetPath)) {
+      return false;
+    }
+
+    const changedProjectPaths = options.changedProjectPaths || null;
+    const stats = tryStat(targetPath);
+
+    if (!stats) {
+      const deletedPath = inferDeletedProjectPath(
+        projectRoot,
+        targetPath,
+        currentPathIndex,
+        runtimeParams
+      );
+      removeDirectoryWatchersUnder(targetPath);
+      return removeCurrentEntry(deletedPath.projectPath, changedProjectPaths);
+    }
+
+    if (!stats.isDirectory()) {
+      return syncAbsolutePath(targetPath, options);
+    }
+
+    const projectPath = toProjectPath(projectRoot, targetPath, {
+      isDirectory: true,
+      runtimeParams
+    });
+    const existed = Boolean(projectPath && currentPathIndex[projectPath]);
+
+    if (!replica && liveWatchEnabled) {
+      if (existed) {
+        watchDirectory(targetPath);
+      } else {
+        watchDirectoryTree(targetPath);
+      }
+    }
+
+    return upsertCurrentEntry(targetPath, {
+      isDirectory: true,
+      stats
+    }, changedProjectPaths);
   }
 
   function buildReplicatedStateChanges(options = {}) {
@@ -1309,13 +1459,57 @@ export function createWatchdog(options = {}) {
     const nextGroupIndex = handlerStates.get("group_index") || getRuntimeGroupIndex();
     const stateChanges = [];
     const previousFileShardIds = Object.keys(replicatedAreaState[FILE_INDEX_AREA] || Object.create(null));
-    const nextFileShardIds = collectFileIndexShardIds(currentPathIndex);
+    const nextFileShards = fullReshard ? buildFileIndexShards(currentPathIndex) : null;
+    const fileChangeProjectPaths = fullReshard
+      ? []
+      : [
+          ...new Set(
+            (Array.isArray(options.fileChangeProjectPaths) ? options.fileChangeProjectPaths : [])
+              .map((projectPath) => normalizeProjectPath(projectPath, {
+                isDirectory: String(projectPath || "").endsWith("/")
+              }))
+              .filter(Boolean)
+          )
+        ];
+    const nextFileShardIds = fullReshard ? Object.keys(nextFileShards || Object.create(null)) : [];
+    const incrementalFileChangesByShard = new Map();
+
+    if (!fullReshard) {
+      fileChangeProjectPaths.forEach((projectPath) => {
+        const shardId = getFileIndexShardId(projectPath);
+
+        if (!shardId) {
+          return;
+        }
+
+        if (!incrementalFileChangesByShard.has(shardId)) {
+          incrementalFileChangesByShard.set(shardId, []);
+        }
+
+        incrementalFileChangesByShard.get(shardId).push(projectPath);
+      });
+    }
+
     const fileShardIds = fullReshard
       ? sortStrings([...previousFileShardIds, ...nextFileShardIds])
-      : collectFileIndexShardIdsFromProjectPaths(changes.map((change) => change.projectPath));
+      : collectFileIndexShardIdsFromProjectPaths(fileChangeProjectPaths);
 
     fileShardIds.forEach((shardId) => {
-      const shardValue = buildFileIndexShardValue(currentPathIndex, shardId);
+      const shardValue = fullReshard
+        ? nextFileShards?.[shardId] || Object.create(null)
+        : clonePathIndex(replicatedAreaState[FILE_INDEX_AREA]?.[shardId] || Object.create(null));
+
+      if (!fullReshard) {
+        for (const projectPath of incrementalFileChangesByShard.get(shardId) || []) {
+          const metadata = currentPathIndex[projectPath];
+
+          if (metadata) {
+            shardValue[projectPath] = { ...metadata };
+          } else {
+            delete shardValue[projectPath];
+          }
+        }
+      }
 
       stateChanges.push(
         Object.keys(shardValue).length > 0
@@ -1356,6 +1550,7 @@ export function createWatchdog(options = {}) {
     const result = stateSystem.commitEntries(
       buildReplicatedStateChanges({
         changes: options.changes,
+        fileChangeProjectPaths: options.fileChangeProjectPaths,
         fullReshard: options.fullReshard,
         previousGroupIndex: options.previousGroupIndex,
         previousUserIndex: options.previousUserIndex
@@ -1403,9 +1598,36 @@ export function createWatchdog(options = {}) {
       throw new Error("Replica watchdogs cannot apply filesystem path changes directly.");
     }
 
-    const pathsToSync = [...new Set((absolutePaths || []).filter(Boolean))];
+    const syncTargets = [];
+    const seenTargets = new Map();
 
-    if (pathsToSync.length === 0) {
+    for (const targetValue of Array.isArray(absolutePaths) ? absolutePaths : []) {
+      const metadataOnly = Boolean(targetValue?.metadataOnly);
+      const rawPath =
+        typeof targetValue === "string"
+          ? targetValue
+          : targetValue?.absolutePath || targetValue?.path || "";
+      const absolutePath = rawPath ? path.resolve(String(rawPath)) : "";
+
+      if (!absolutePath) {
+        continue;
+      }
+
+      if (seenTargets.has(absolutePath)) {
+        if (!metadataOnly) {
+          syncTargets[seenTargets.get(absolutePath)].metadataOnly = false;
+        }
+        continue;
+      }
+
+      seenTargets.set(absolutePath, syncTargets.length);
+      syncTargets.push({
+        absolutePath,
+        metadataOnly
+      });
+    }
+
+    if (syncTargets.length === 0) {
       return {
         delta: null,
         projectPaths: [],
@@ -1415,20 +1637,28 @@ export function createWatchdog(options = {}) {
 
     let changed = false;
     const changes = [];
+    const fileChangeProjectPaths = new Set();
     const previousUserIndex = handlerStates.get("user_index") || getRuntimeUserIndex();
     const previousGroupIndex = handlerStates.get("group_index") || getRuntimeGroupIndex();
 
-    for (const targetPath of pathsToSync) {
-      const change = createChangeEvent(targetPath);
+    for (const target of syncTargets) {
+      const change = createChangeEvent(target.absolutePath);
 
       if (change.projectPath && isIgnoredProjectPath(change.projectPath)) {
         continue;
       }
 
-      changes.push(change);
+      const targetChanged = target.metadataOnly
+        ? syncMetadataOnlyPath(target.absolutePath, {
+            changedProjectPaths: fileChangeProjectPaths
+          })
+        : syncAbsolutePath(target.absolutePath, {
+            changedProjectPaths: fileChangeProjectPaths
+          });
 
-      if (syncAbsolutePath(targetPath)) {
+      if (targetChanged) {
         changed = true;
+        changes.push(change);
       }
     }
 
@@ -1447,7 +1677,7 @@ export function createWatchdog(options = {}) {
           ]
         : [...new Set(changes.map((change) => change.projectPath).filter(Boolean))];
 
-    if (!changed && changes.length === 0) {
+    if (!changed || changes.length === 0) {
       return {
         changed: false,
         delta: null,
@@ -1461,6 +1691,7 @@ export function createWatchdog(options = {}) {
     const stateCommit = commitReplicatedState({
       changes,
       emit: options.emit,
+      fileChangeProjectPaths: [...fileChangeProjectPaths],
       projectPaths: projectPathsToEmit,
       previousGroupIndex,
       previousUserIndex
@@ -1644,6 +1875,10 @@ export function createWatchdog(options = {}) {
   }
 
   function startConfigWatcher() {
+    if (!liveWatchEnabled) {
+      return;
+    }
+
     configWatcher = (currentStats) => {
       const nextConfigSignature = getStatsSignature(currentStats);
 
@@ -1659,7 +1894,13 @@ export function createWatchdog(options = {}) {
   }
 
   function scheduleNextReconcile() {
-    if (replica || !started || !Number.isFinite(reconcileIntervalMs) || reconcileIntervalMs <= 0) {
+    if (
+      replica ||
+      !liveWatchEnabled ||
+      !started ||
+      !Number.isFinite(reconcileIntervalMs) ||
+      reconcileIntervalMs <= 0
+    ) {
       return;
     }
 
@@ -1703,10 +1944,11 @@ export function createWatchdog(options = {}) {
       throw new Error("Replica watchdogs cannot scan authoritative filesystem changes.");
     }
 
-    const expandedProjectPaths = expandProjectSyncTargets(normalizedProjectPaths);
-    const absolutePaths = expandedProjectPaths.map((projectPath) =>
-      toAbsolutePath(projectRoot, projectPath, runtimeParams)
-    );
+    const expandedProjectPaths = collectProjectSyncTargets(normalizedProjectPaths, currentPathIndex);
+    const absolutePaths = expandedProjectPaths.map((target) => ({
+      absolutePath: toAbsolutePath(projectRoot, target.projectPath, runtimeParams),
+      metadataOnly: target.metadataOnly
+    }));
 
     return enqueueOperation(async () =>
       applyAbsolutePathChanges(absolutePaths, {

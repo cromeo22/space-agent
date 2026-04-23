@@ -28,7 +28,7 @@ import {
   serializeAttachmentMetadata
 } from "/mod/_core/onscreen_agent/attachments.js";
 
-const CONFIG_PERSIST_DELAY_MS = 180;
+const UI_STATE_PERSIST_DELAY_MS = 180;
 const STARTUP_HINT_DELAY_MS = 2000;
 const STARTUP_HINT_VISIBLE_MS = 3000;
 const COMPACT_MODE_TOP_EDGE_THRESHOLD_EM = 10;
@@ -1325,7 +1325,6 @@ const model = {
   composerActionMenuRenderToken: 0,
   compactAssistantBubble: null,
   compactAssistantBubbleMessageId: "",
-  configPersistTimer: 0,
   chatRuntime: null,
   defaultSystemPrompt: "",
   displayMode: DISPLAY_MODE_COMPACT,
@@ -1404,6 +1403,8 @@ const model = {
   uiBubbleExitTimer: 0,
   uiBubblePhase: "",
   uiBubbleText: "",
+  uiStateOwner: "",
+  uiStatePersistTimer: 0,
   settings: {
     apiEndpoint: "",
     apiKey: "",
@@ -2472,7 +2473,7 @@ const model = {
     }
 
     if (options.persist !== false) {
-      this.scheduleConfigPersist();
+      this.scheduleUiStatePersist();
     }
   },
 
@@ -2494,7 +2495,7 @@ const model = {
       moved = true;
 
       if (options.persist === true) {
-        this.scheduleConfigPersist();
+        this.scheduleUiStatePersist();
       }
 
       if (options.reflow === true) {
@@ -2532,7 +2533,7 @@ const model = {
     }
 
     if (moved && options.persist === true) {
-      this.scheduleConfigPersist();
+      this.scheduleUiStatePersist();
     }
 
     if (moved || options.reflow === true) {
@@ -2556,7 +2557,7 @@ const model = {
     this.closeComposerActionMenu();
 
     if (options.persist !== false) {
-      this.scheduleConfigPersist();
+      this.scheduleUiStatePersist();
     }
 
     if (options.reflow === true) {
@@ -2566,26 +2567,34 @@ const model = {
     return true;
   },
 
-  scheduleConfigPersist() {
-    if (this.configPersistTimer) {
-      window.clearTimeout(this.configPersistTimer);
+  getUiStateSnapshot() {
+    return {
+      agentX: this.agentX,
+      agentY: this.agentY,
+      displayMode: this.displayMode,
+      hiddenEdge: this.hiddenEdge,
+      historyHeight: this.historyHeight,
+      owner: this.uiStateOwner
+    };
+  },
+
+  persistUiState() {
+    storage.saveOnscreenAgentUiState(this.getUiStateSnapshot());
+  },
+
+  scheduleUiStatePersist() {
+    if (this.uiStatePersistTimer) {
+      window.clearTimeout(this.uiStatePersistTimer);
     }
 
-    this.configPersistTimer = window.setTimeout(() => {
-      this.configPersistTimer = 0;
-      void this.persistConfig();
-    }, CONFIG_PERSIST_DELAY_MS);
+    this.uiStatePersistTimer = window.setTimeout(() => {
+      this.uiStatePersistTimer = 0;
+      this.persistUiState();
+    }, UI_STATE_PERSIST_DELAY_MS);
   },
 
   async persistConfig() {
     try {
-      storage.saveOnscreenAgentUiState({
-        agentX: this.agentX,
-        agentY: this.agentY,
-        displayMode: this.displayMode,
-        hiddenEdge: this.hiddenEdge,
-        historyHeight: this.historyHeight
-      });
       await storage.saveOnscreenAgentConfig({
         settings: this.settings,
         systemPrompt: this.systemPrompt
@@ -3316,6 +3325,7 @@ const model = {
         this.shouldCenterInitialPosition = storedConfig.shouldCenterInitialPosition === true;
         this.displayMode = normalizeDisplayMode(storedConfig.displayMode);
         this.historyHeight = config.normalizeOnscreenAgentHistoryHeight(storedConfig.historyHeight);
+        this.uiStateOwner = String(storedConfig.uiStateOwner || "").trim();
 
         if (this.shouldCenterInitialPosition) {
           const initialPosition = this.getInitialBottomAlignedCenteredPositionEstimate();
@@ -3552,9 +3562,10 @@ const model = {
     this.uiBubblePhase = "";
     this.uiBubbleText = "";
 
-    if (this.configPersistTimer) {
-      window.clearTimeout(this.configPersistTimer);
-      this.configPersistTimer = 0;
+    if (this.uiStatePersistTimer) {
+      window.clearTimeout(this.uiStatePersistTimer);
+      this.uiStatePersistTimer = 0;
+      this.persistUiState();
     }
 
     if (this.resizeHandler) {
@@ -3689,7 +3700,7 @@ const model = {
     this.cleanupDrag();
 
     if (wasDrag) {
-      this.scheduleConfigPersist();
+      this.scheduleUiStatePersist();
       return;
     }
 
@@ -3763,7 +3774,7 @@ const model = {
     this.cleanupHistoryResize();
 
     if (resized) {
-      this.scheduleConfigPersist();
+      this.scheduleUiStatePersist();
     }
   },
 
@@ -3803,7 +3814,7 @@ const model = {
     this.closeComposerActionMenu();
 
     if (shouldPersist && modeChanged && !revealedHiddenEdge) {
-      this.scheduleConfigPersist();
+      this.scheduleUiStatePersist();
     }
 
     if (shouldHideBubble) {

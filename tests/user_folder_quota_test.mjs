@@ -57,9 +57,22 @@ function collectProjectPaths(projectRoot) {
 function createWatchdog(projectRoot) {
   const paths = collectProjectPaths(projectRoot);
   const pathIndex = Object.create(null);
+  const appRoot = path.join(projectRoot, "app");
 
   for (const projectPath of paths) {
-    pathIndex[projectPath] = true;
+    const isDirectory = projectPath.endsWith("/");
+    const relativePath = projectPath
+      .slice("/app/".length)
+      .replace(/\/$/u, "")
+      .replaceAll("/", path.sep);
+    const absolutePath = relativePath ? path.join(appRoot, relativePath) : appRoot;
+    const stats = fs.statSync(absolutePath);
+
+    pathIndex[projectPath] = {
+      isDirectory,
+      mtimeMs: Math.trunc(Number(stats.mtimeMs || 0)),
+      sizeBytes: isDirectory ? 0 : Number(stats.size || 0)
+    };
   }
 
   return {
@@ -325,4 +338,58 @@ function readUserFile(projectRoot, username, filePath) {
     });
   });
   assert.equal(fs.existsSync(path.join(projectRoot, "app", "L2", "alice", "copy.txt")), false);
+}
+
+{
+  const projectRoot = createProjectRoot();
+  const unboundedRuntimeParams = createStaticRuntimeParams({
+    USER_FOLDER_SIZE_LIMIT_BYTES: 0
+  });
+  const quotaRuntimeParams = createStaticRuntimeParams({
+    USER_FOLDER_SIZE_LIMIT_BYTES: 15
+  });
+
+  writeAppFile({
+    content: "12345",
+    path: "~/nested/a.txt",
+    projectRoot,
+    runtimeParams: unboundedRuntimeParams,
+    username: "alice"
+  });
+  writeAppFile({
+    content: "1234",
+    path: "~/nested/b.txt",
+    projectRoot,
+    runtimeParams: unboundedRuntimeParams,
+    username: "alice"
+  });
+
+  const watchdog = createWatchdog(projectRoot);
+  const originalLstatSync = fs.lstatSync;
+  const originalReaddirSync = fs.readdirSync;
+
+  fs.lstatSync = () => {
+    throw new Error("disk quota crawl is not allowed");
+  };
+  fs.readdirSync = () => {
+    throw new Error("disk quota crawl is not allowed");
+  };
+
+  try {
+    assertQuotaError(() => {
+      copyAppPath({
+        fromPath: "~/nested/",
+        projectRoot,
+        runtimeParams: quotaRuntimeParams,
+        toPath: "~/copy/",
+        username: "alice",
+        watchdog
+      });
+    });
+  } finally {
+    fs.lstatSync = originalLstatSync;
+    fs.readdirSync = originalReaddirSync;
+  }
+
+  assert.equal(fs.existsSync(path.join(projectRoot, "app", "L2", "alice", "copy")), false);
 }

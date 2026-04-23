@@ -1,22 +1,19 @@
 import { createIsomorphicGitClient, createIsomorphicGitCloneClient } from "./isomorphic_handler.js";
 import { createNativeGitClient, createNativeGitCloneClient } from "./native_handler.js";
-import { createNodeGitClient, createNodeGitCloneClient } from "./nodegit_handler.js";
 import { assertGitClient } from "./client_interface.js";
 import { resolveGitContext, resolveRequestedGitBackend } from "./shared.js";
 
 const BACKEND_FACTORIES = {
   native: createNativeGitClient,
-  nodegit: createNodeGitClient,
   isomorphic: createIsomorphicGitClient
 };
 
 const CLONE_BACKEND_FACTORIES = {
   native: createNativeGitCloneClient,
-  nodegit: createNodeGitCloneClient,
   isomorphic: createIsomorphicGitCloneClient
 };
 
-const DEFAULT_BACKEND_ORDER = ["native", "nodegit", "isomorphic"];
+const DEFAULT_BACKEND_ORDER = ["native", "isomorphic"];
 
 function buildUnavailableBackendMessage(attempts) {
   return attempts

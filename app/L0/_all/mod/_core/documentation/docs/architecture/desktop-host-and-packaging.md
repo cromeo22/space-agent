@@ -92,7 +92,7 @@ Current build behavior:
 - enables hardened-runtime signing inputs for macOS and keeps notarization credential discovery in the standard `electron-builder` environment-variable flow
 - allows local macOS packaging without signing credentials by honoring `SKIP_SIGNING=1` in the desktop builder wrapper, and also accepts the launcher-style `APPLE_PASSWORD` env var as a local alias for `APPLE_APP_SPECIFIC_PASSWORD`
 - publishes platform-specific GitHub updater metadata so packaged apps can resolve new installers and bundles from the GitHub Release they were built for, using the canonical release asset names `metadata-latest-windows.yml`, `metadata-latest-mac.yml`, `metadata-latest-linux.yml`, and `metadata-latest-linux-arm64.yml`; those metadata files are rewritten during staging to point only at canonical NSIS installers, AppImages, and macOS updater zips, and the packaged Windows host now also recognizes the canonical public installer names directly so it can recover when a published Windows metadata file drops one arch entry
-- disables `npmRebuild` so optional native dependencies such as `nodegit` do not block desktop packaging when fallback Git backends are already available
+- disables `npmRebuild` so packaged desktop builds can rely on the native-or-isomorphic Git backend abstraction without rebuilding native Git addon dependencies
 - keeps `asar` disabled so the bundled project tree stays watchable on disk
 - writes platform artifacts under `dist/desktop/<platform>/`
 - for macOS, the default targets are `dmg` and `zip`; the DMG remains the user-facing installer while the ZIP remains the updater payload

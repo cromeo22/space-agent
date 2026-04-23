@@ -69,4 +69,5 @@ This module owns:
 - when framework-owned Alpine helper directives change route-to-shell injection behavior, keep `docs/app/modules-and-extensions.md` and any affected feature docs such as `docs/app/spaces-and-widgets.md` aligned in the same session
 - when routed shell-clearance ownership changes between `_core/router` and a feature route such as `_core/dashboard`, keep `docs/app/runtime-and-layers.md` and `docs/app/modules-and-extensions.md` aligned with the owning `AGENTS.md` files in the same session
 - when the live prompt changes how off-runtime website visits are handled, keep `docs/agent/prompt-and-execution.md` and `docs/agent/skills-and-documentation.md` aligned with the prompt and `browser-control` contract in the same session
+- when clustered write-path diagnostics or their repeatable harness change, keep `docs/server/api/files.md` aligned with `tests/server_cluster_write_stress_test.mjs` and the owning `tests/AGENTS.md` contract in the same session
 - do not let this module drift into a second hidden prompt system; it is browsable repo documentation

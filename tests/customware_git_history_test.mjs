@@ -821,13 +821,13 @@ try {
   const gitLogPath = path.join(gitWrapperDir, "commits.log");
   const realGitPath = readGitExecutablePath();
   const originalPath = process.env.PATH || "";
-  const originalBackend = process.env.SPACE_GIT_BACKEND;
+  const originalBackend = process.env.GIT_BACKEND;
   const originalRealGitPath = process.env.SPACE_TEST_REAL_GIT;
   const originalGitLogPath = process.env.SPACE_TEST_GIT_LOG;
 
   writeGitWrapperScript(gitWrapperPath);
   process.env.PATH = `${gitWrapperDir}${path.delimiter}${originalPath}`;
-  process.env.SPACE_GIT_BACKEND = "native";
+  process.env.GIT_BACKEND = "native";
   process.env.SPACE_TEST_REAL_GIT = realGitPath;
   process.env.SPACE_TEST_GIT_LOG = gitLogPath;
 
@@ -883,9 +883,9 @@ try {
     process.env.PATH = originalPath;
 
     if (originalBackend === undefined) {
-      delete process.env.SPACE_GIT_BACKEND;
+      delete process.env.GIT_BACKEND;
     } else {
-      process.env.SPACE_GIT_BACKEND = originalBackend;
+      process.env.GIT_BACKEND = originalBackend;
     }
 
     if (originalRealGitPath === undefined) {

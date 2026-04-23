@@ -99,6 +99,26 @@ function buildFileIndexShardValue(pathIndex, shardId) {
   return shardValue;
 }
 
+function buildFileIndexShards(pathIndex = createEmptyRecordMap()) {
+  const shardMap = createEmptyRecordMap();
+
+  Object.entries(pathIndex || createEmptyRecordMap()).forEach(([projectPath, metadata]) => {
+    const shardId = getFileIndexShardId(projectPath);
+
+    if (!shardId) {
+      return;
+    }
+
+    if (!shardMap[shardId]) {
+      shardMap[shardId] = createEmptyRecordMap();
+    }
+
+    shardMap[shardId][projectPath] = cloneValue(metadata);
+  });
+
+  return shardMap;
+}
+
 function collectAffectedUsernames(changes = []) {
   const usernames = new Set();
 
@@ -398,6 +418,7 @@ export {
   SHARED_STATE_AREA,
   USER_ERROR_INDEX_AREA,
   USER_INDEX_AREA,
+  buildFileIndexShards,
   buildFileIndexShardValue,
   buildGroupIndexShardChanges,
   buildUserIndexShardChanges,
